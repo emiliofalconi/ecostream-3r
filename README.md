@@ -40,14 +40,18 @@ El sistema incorpora al menos 5 patrones canónicos de arquitectura en la nube:
 
 ---
 
-## 🎨 Apartado Visual y Sprites (Estilo Stardew Valley)
+## 🎨 Apartado Visual y Especificaciones de Sprites (Estilo Stardew Valley)
 
-Se ha diseñado una hoja de sprites modular en formato pixel art cálido y pastoral de **32x32 píxeles**:
-- **Tileset PNG:** [`assets/sprites/tileset_stardew.png`](assets/sprites/tileset_stardew.png)
-- **Atlas de Coordenadas JSON:** [`assets/sprites/tileset.json`](assets/sprites/tileset.json)
-- **Generador de Assets:** [`scripts/generate_sprites.py`](scripts/generate_sprites.py)
+El apartado visual del juego sigue una dirección de arte inspirada en la atmósfera pastoral, cálida y acogedora de **Stardew Valley** (Pixel Art en vista top-down 3/4).
 
-Contiene terrenos de pasto, tierra batida, estanques de agua cristalina con oleaje, muros de piedra, canales de agua, fugas con salpicaduras animadas, cultivos irrigados y avatares para 4 jugadores (Cross-Play entre TypeScript y Python).
+Se ha elaborado una guía completa con **prompts optimizados para modelos de generación de arte por IA** (Midjourney, DALL-E 3, Stable Diffusion, etc.) para crear cada uno de los componentes visuales:
+- Terrenos modulares (pasto, tierra, caminos, orillas de estanque).
+- Mecánica **Reducir** (aspersores, canales con flujo y roturas con fugas animadas).
+- Mecánica **Reusar** (desvíos de aguas grises y huertos agrícolas floreciendo).
+- Mecánica **Reciclar** (molino de agua rural y lechos biológicos de purificación).
+- Avatares de jugadores con overoles y herramientas para partidas multijugador.
+
+👉 **Consulta la guía de prompts aquí:** [docs/PROMPTS_DISENO_SPRITES.md](docs/PROMPTS_DISENO_SPRITES.md)
 
 ---
 
