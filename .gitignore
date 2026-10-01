@@ -1,0 +1,27 @@
+# Binaries and build artifacts
+target/
+bin/
+dist/
+build/
+*.exe
+*.o
+*.so
+
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+env/
+
+# IDE and OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+
+# Environment variables
+.env
+.env.local
