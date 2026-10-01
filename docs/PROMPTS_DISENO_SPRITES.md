@@ -16,9 +16,40 @@ Este documento contiene los **prompts optimizados para modelos de generación de
     - Verde esmeralda: Riego ecológico y plantas florecidas.
 - **Fondo:** Fondo transparente (PNG Alpha) para recortes y armado de spritesheets.
 
----
+## 🌟 PROMPT ÚNICO MAESTRO (TODO EN UNO)
 
-## 1. Prompt Maestro para la Hoja de Sprites Completa (Spritesheet Atlas)
+Copia y pega este único prompt en Midjourney, DALL-E 3, Stable Diffusion o el modelo de arte IA de tu preferencia. Incluye las especificaciones globales y el desglose de los tiles que requieren **dedicación especial**:
+
+```text
+A complete 2D pixel art tileset and sprite sheet for a cooperative water-conservation game, top-down 3/4 RPG perspective, cozy warm aesthetic heavily inspired by Stardew Valley. Clean 32x32 pixel grid layout, sharp pixel borders, retro 16-bit palette, isolated on a solid white or transparent background, no anti-aliasing, no blur.
+
+THE SPRITE SHEET MUST CLEARLY INCLUDE THESE CRITICAL SECTIONS:
+
+1. ENVIRONMENT & RESERVOIR (High detail):
+- Seamless warm green pastoral grass with small yellow/white wildflowers.
+- Tilled rich brown soil plots and rustic cobblestone path tiles.
+- Clean blue water reservoir tiles with subtle wave highlights and wooden dock borders.
+
+2. MECHANIC "REDUCE" (SPECIAL DEDICATION REQUIRED - High contrast):
+- Clean wooden and copper pipe segments (horizontal, vertical, L-turns, and T-junctions) with visible water flowing inside.
+- LEAKING PIPE TILE: A cracked pipe with vibrant bright cyan pressurized water spray and animated splash droplet particles shooting outward (must clearly communicate urgent repair needed).
+- WHEEL VALVES: Circular brass wheel valves in two distinct states: RED for fully closed, GREEN for fully open.
+
+3. MECHANIC "REUSE" (SPECIAL DEDICATION REQUIRED - State progression):
+- Rustic wooden sluice gates and diversion channels directing water flow.
+- TWO CROP SOIL STATES: Dry cracked parched soil vs. healthy hydrated dark soil with thriving, glowing green cabbages and wheat.
+
+4. MECHANIC "RECYCLE" (SPECIAL DEDICATION REQUIRED - Multi-tile structure):
+- Ecological purification station: A rustic wooden watermill building with an active water wheel, connected to a 3-layer bio-filtration tank showing cross-section layers of sand, gravel, and activated dark charcoal. Shows murky brown wastewater entering and crystal-clear pure water exiting into a stone basin.
+
+5. CHARACTERS & TOOLS:
+- 4 eco-farmer technician avatars wearing denim overalls, straw hats, and work boots, with distinctly colored shirts (Red, Blue, Green, Yellow) in 4-direction top-down poses.
+- Interactive tools: an oversized metallic wrench, replacement pipe gaskets, and a bag of filter gravel.
+
+Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp authentic pixel art.
+```
+
+---
 
 > **Prompt:**
 > ```text
