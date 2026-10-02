@@ -25,7 +25,7 @@ El juego incluye además un sistema de **chat multijugador en tiempo real** inte
 | **Persistencia** | **PostgreSQL 16** | Modelo relacional para cuentas de usuario, historial de partidas, métricas y consistencia transaccional ACID. |
 | **Control Plane & Gateway** | **Go 1.22+** | Autenticación JWT, Matchmaking, Worker Pools con **Goroutines**, endpoints de salud (`/healthz`, `/readyz`), documentación OpenAPI/Swagger interactiva y disyuntores (*Circuit Breakers*). |
 | **Data Plane & Simulación** | **Rust (Tokio / Tonic)** | Bucle de simulación física autoritativo a **20 Ticks/segundo**, gestión de memoria libre de Garbage Collector y streaming bidireccional gRPC de ultra-baja latencia. |
-| **Cliente 1 (Escritorio / UI)** | **Tauri (TypeScript + Vite)** | Interfaz gráfica de escritorio con estética Pixel Art (Stardew Valley) sobre Canvas 2D y conexión directa gRPC HTTP/2 nativa sin sobrecarga de proxies. |
+| **Cliente 1 (Escritorio / UI)** | **Tauri (TypeScript + Vite)** | Interfaz gráfica de escritorio con estética Pixel Art 2D sobre Canvas y conexión directa gRPC HTTP/2 nativa sin sobrecarga de proxies. |
 | **Cliente 2 (Multiplataforma / Bot)** | **Python (Pygame + grpcio)** | Cliente interactivo con teclado para compañeros/evaluadores, con opción de activar modo `--bot` para pruebas de estrés y escalabilidad en la nube. |
 | **Comunicación Inter-Servicios** | **gRPC & Protocol Buffers (proto3)** | Serialización binaria tipada estricta, streaming reactivo y telemetría de latencia en vivo (RTT Ping-Pong). |
 
@@ -42,9 +42,9 @@ El sistema incorpora al menos 5 patrones canónicos de arquitectura en la nube:
 
 ---
 
-## 🎨 Apartado Visual y Especificaciones de Sprites (Estilo Stardew Valley)
+## 🎨 Apartado Visual y Especificaciones de Sprites
 
-El apartado visual del juego sigue una dirección de arte inspirada en la atmósfera pastoral, cálida y acogedora de **Stardew Valley** (Pixel Art en vista top-down 3/4).
+El apartado visual del juego sigue una dirección de arte en **Pixel Art 2D en vista top-down 3/4**, orientada a la gestión clara y visual del agua y los recursos ecológicos.
 
 Se ha elaborado una guía completa con **prompts optimizados para modelos de generación de arte por IA** (Midjourney, DALL-E 3, Stable Diffusion, etc.) para crear cada uno de los componentes visuales:
 - Terrenos modulares (pasto, tierra, caminos, orillas de estanque).
@@ -62,6 +62,7 @@ Se ha elaborado una guía completa con **prompts optimizados para modelos de gen
 Para consultar la planificación técnica exhaustiva, visita el directorio `docs/`:
 - [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, tolerancia a fallos Zero-SPOF, concurrencia en Go con Goroutines, seguridad mTLS/JWT y despliegue (LAN vs Nube).
 - [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Documento de diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
+- [docs/ARQUITECTURA_FLUJOS_Y_UML.md](docs/ARQUITECTURA_FLUJOS_Y_UML.md): Especificación detallada de flujos, balanceo de carga, detección de fallos y guía exhaustiva de diagramas UML.
 
 ---
 
@@ -72,7 +73,7 @@ Para consultar la planificación técnica exhaustiva, visita el directorio `docs
   - [x] Selección e integración de tecnologías (Postgres, Go, Rust, TypeScript/Tauri, Python).
   - [x] Estrategia de tolerancia a fallos y eliminación de SPOF en el Gateway.
   - [x] Justificación técnica de Goroutines y selección de los 5 patrones cloud-native.
-  - [x] Generación del tileset pixel art estilo Stardew Valley y atlas JSON.
+  - [ ] Generación y consolidación de assets y tileset Pixel Art 2D.
 - [ ] **Fase 1: Contratos de Comunicación (Protocol Buffers)**
   - [ ] Creación de `proto/v1/auth.proto`, `matchmaking.proto` y `gameplay.proto`.
   - [ ] Generación automática de stubs para Go, Rust, TS y Python.

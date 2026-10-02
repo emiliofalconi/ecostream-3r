@@ -1,11 +1,11 @@
-# Guía de Prompts para Generación de Assets y Sprites (Estilo Stardew Valley)
+# Guía de Prompts para Generación de Assets y Sprites (Pixel Art 2D)
 
 Este documento contiene los **prompts optimizados para modelos de generación de imágenes / arte por IA** (Midjourney, DALL-E 3, Stable Diffusion XL, Flux, o modelos especializados en Pixel Art) para crear el apartado visual completo del juego **EcoStream 3R**.
 
 ---
 
 ## 🎨 Especificaciones Técnicas Generales
-- **Estilo Artístico:** 16-bit / 32-bit Cozy Pixel Art, vista ortogonal / top-down (cenital ligeramente inclinada ¾), inspirado en la estética pastoral y cálida de *Stardew Valley*.
+- **Estilo Artístico:** 16-bit / 32-bit Retro Pixel Art, vista ortogonal / top-down (cenital ligeramente inclinada ¾), estética rural y de gestión de recursos.
 - **Paleta de Colores:** Cálida, orgánica y saturación media:
   - Tonos tierra cálidos, maderas rústicas, pastos verdes naturales y agua azul cristalina.
   - Colores de alto contraste funcional para mecánicas del agua:
@@ -21,7 +21,7 @@ Este documento contiene los **prompts optimizados para modelos de generación de
 Copia y pega este único prompt en Midjourney, DALL-E 3, Stable Diffusion o el modelo de arte IA de tu preferencia. Incluye las especificaciones globales y el desglose de los tiles que requieren **dedicación especial**:
 
 ```text
-A complete 2D pixel art tileset and sprite sheet for a cooperative water-conservation game, top-down 3/4 RPG perspective, cozy warm aesthetic heavily inspired by Stardew Valley. Clean 32x32 pixel grid layout, sharp pixel borders, retro 16-bit palette, isolated on a solid white or transparent background, no anti-aliasing, no blur.
+A complete 2D pixel art tileset and sprite sheet for a cooperative water-conservation game, top-down 3/4 RPG perspective, cozy warm rural aesthetic, 16-bit retro farm style. Clean 32x32 pixel grid layout, sharp pixel borders, retro 16-bit palette, isolated on a solid white or transparent background, no anti-aliasing, no blur.
 
 THE SPRITE SHEET MUST CLEARLY INCLUDE THESE CRITICAL SECTIONS:
 
@@ -51,9 +51,11 @@ Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp au
 
 ---
 
+## 1. Prompt Maestro para la Hoja de Sprites Completa (Spritesheet Atlas)
+
 > **Prompt:**
 > ```text
-> 2D pixel art game sprite sheet, top-down 3/4 RPG perspective, Stardew Valley aesthetic, 32x32 pixel grid layout, cohesive color palette. The sprite sheet contains:
+> 2D pixel art game sprite sheet, top-down 3/4 RPG perspective, cozy retro 16-bit farm aesthetic, 32x32 pixel grid layout, cohesive color palette. The sprite sheet contains:
 > 1) Terrain tiles: warm green lush grass with small wildflowers, rich brown dirt pathways, rustic wooden fence segments, stone riverbank edges, and clear blue water pond tiles.
 > 2) Water infrastructure (Reduce): wooden and copper irrigation channels, small garden sprinklers, cracked pipe leaking high-pressure water splashes, circular red closed valve, green open valve.
 > 3) Agriculture & Reuse: dry plowed crop soil, healthy watered vegetable plots with glowing green cabbages and tomatoes.
@@ -69,13 +71,13 @@ Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp au
 ### 2.1 Terrenos y Entorno Rural (Tileset de Suelo y Naturaleza)
 > **Prompt:**
 > ```text
-> Top-down 2D pixel art tileset for farm and water reservoir environment, Stardew Valley art style. Includes seamless modular tiles: warm pastoral grass, cobblestone path, tilled soil, water pond edges with reeds and pebbles, rustic wooden dock. 32x32 pixel seamless tiles, warm earthy palette, crisp pixel art, clean borders, game ready asset, transparent background --v 6.0
+> Top-down 2D pixel art tileset for farm and water reservoir environment, cozy 16-bit RPG art style. Includes seamless modular tiles: warm pastoral grass, cobblestone path, tilled soil, water pond edges with reeds and pebbles, rustic wooden dock. 32x32 pixel seamless tiles, warm earthy palette, crisp pixel art, clean borders, game ready asset, transparent background --v 6.0
 > ```
 
 ### 2.2 Mecánica REDUCIR: Tuberías, Válvulas y Fugas
 > **Prompt:**
 > ```text
-> Pixel art sprite pack of water conservation and pipe repair objects, top-down view, Stardew Valley style:
+> Pixel art sprite pack of water conservation and pipe repair objects, top-down view, cozy retro game style:
 > - Wooden aqueduct channel with clear water flowing inside.
 > - Copper pipe segment bursting with animated water splash droplets.
 > - Wall-mounted brass pressure gauge and red emergency wheel valve.
@@ -86,7 +88,7 @@ Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp au
 ### 2.3 Mecánica REUSAR: Huertos y Desvío de Aguas Grises
 > **Prompt:**
 > ```text
-> Top-down 2D pixel art sprites of rural irrigation and greywater recycling, cozy farm aesthetic like Stardew Valley:
+> Top-down 2D pixel art sprites of rural irrigation and greywater recycling, cozy farm aesthetic:
 > - Wooden sluice gates and diversion water valves.
 > - Dry parched farmland plot transitioning into vibrant irrigated crop field with thriving crops.
 > - Water reservoir barrel connected to drip irrigation pipes.
@@ -96,7 +98,7 @@ Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp au
 ### 2.4 Mecánica RECICLAR: Molino Purificador y Filtros Biológicos
 > **Prompt:**
 > ```text
-> Cozy pixel art game structure of an ecological water recycling station, top-down 3/4 perspective, Stardew Valley style:
+> Cozy pixel art game structure of an ecological water recycling station, top-down 3/4 perspective, 16-bit RPG style:
 > A rustic wooden watermill building with an active rotating water wheel, connected to layered biological purification tanks (gravel, charcoal, sand filter beds), showing murky wastewater entering on one side and sparkling clean water exiting into a pristine pond.
 > 64x64 pixel game building sprite, warm cozy fantasy farming aesthetic, isolated on transparent background --v 6.0
 > ```
@@ -104,7 +106,7 @@ Pixel-perfect master game asset sheet, cohesive lighting from top-left, crisp au
 ### 2.5 Avatares de Jugadores (Cross-Play Multijugador)
 > **Prompt:**
 > ```text
-> Pixel art character sprite sheet of a cute eco-farmer technician, Stardew Valley character style, top-down view. Wearing classic denim overalls, straw sunhat, brown work boots, and holding a mechanic wrench. Walk cycle animation frames facing front, back, and side, plus an action pose repairing a leak. 32x32 pixels per frame, warm friendly colors, clean pixel art, transparent background --v 6.0
+> Pixel art character sprite sheet of a cute eco-farmer technician, retro 16-bit character style, top-down view. Wearing classic denim overalls, straw sunhat, brown work boots, and holding a mechanic wrench. Walk cycle animation frames facing front, back, and side, plus an action pose repairing a leak. 32x32 pixels per frame, warm friendly colors, clean pixel art, transparent background --v 6.0
 > ```
 
 ---

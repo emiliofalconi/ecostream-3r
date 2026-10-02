@@ -124,11 +124,11 @@ Efectivamente, **Tauri utiliza TypeScript (React, Vue, Svelte o Vanilla TS/Vite)
 
 ---
 
-## 7. Apartado Visual: Estética Pixel Art Estilo "Stardew Valley"
+## 7. Apartado Visual: Estética Pixel Art 2D Retro
 
-Adoptamos una dirección de arte inspirada en la atmósfera cálida y pastoral de **Stardew Valley**:
+Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con ambientación ecológica rural:
 
-### 7.1 Paleta de Color y Ambiente (Cozy Pastoral & Rural Tech)
+### 7.1 Paleta de Color y Ambiente (Rural Tech & Eco-Water)
 - **Terreno y Naturaleza**:
   - Caminos de tierra batida (`#C29A64`), pasto verde natural con tonalidades cálidas (`#5A8F34` y `#7CB342`), cercas de madera rústica y flores silvestres.
 - **Instalaciones de Agua**:
@@ -142,7 +142,7 @@ Adoptamos una dirección de arte inspirada en la atmósfera cálida y pastoral d
 
 ### 7.2 Especificaciones Técnicas de los Sprites
 1. **Resolución Base**:
-   - Tiles de **16x16 px** (o 32x32 px escalados) con contornos suaves oscuros (técnica de pixel art con dithering sutil característico de Stardew Valley).
+   - Tiles de **16x16 px** (o 32x32 px escalados) con contornos limpios y técnica de pixel art nítida.
 2. **Animaciones Clave**:
    - Flujo de agua con ondulaciones en estanques y canales (3 frames).
    - Efecto de salpicadura de agua cuando una tubería/canal tiene una fuga.
