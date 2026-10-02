@@ -14,6 +14,8 @@
 2. **Reusar (Reuse):** Operación de válvulas y compuertas de desvío para canalizar aguas grises hacia parcelas de cultivo y huertos comunitarios, reduciendo el consumo de agua potable.
 3. **Reciclar (Recycle):** Operación de una planta de filtrado ecológico (carbón activo y grava) para descontaminar aguas residuales y reintegrar agua pura al embalse central.
 
+El juego incluye además un sistema de **chat multijugador en tiempo real** integrado para la coordinación y comunicación entre los participantes de la partida.
+
 ---
 
 ## 🛠️ Pila Tecnológica Asignada
