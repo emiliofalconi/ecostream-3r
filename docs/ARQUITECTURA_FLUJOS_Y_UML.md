@@ -18,12 +18,11 @@ El sistema implementa una arquitectura distribuida desacoplada en dos planos fun
                      gRPC / HTTP/2|                |gRPC / HTTP/2
                                   v                v
                       +---------------------------------------+
-                      |         CAPA INGRESS / BALANCEO       |
-                      |      Envoy Proxy / Traefik (HA)       |
-                      | (VIP L4 / Anycast / DNS Round-Robin)  |
+                      |       CAPA DE ACCESO / BALANCING      |
+                      |   (VIP L4 / Anycast / DNS / mDNS)     |
                       +---------------------------------------+
                                   |                |
-             Control Plane (RPCs) |                | Data Plane (Streaming 20Hz)
+             Control Plane (RPCs) |                | Data Plane Directo (Streaming 20Hz)
                                   v                v
         +----------------------------------+     +----------------------------------+
         |     ORQUESTADOR / GATEWAY (Go)   |     |    MOTOR DE JUEGO / SALAS (Rust) |
@@ -113,41 +112,32 @@ Cada 50 milisegundos se ejecuta un ciclo de información:
 En entornos de nube y microservicios gRPC, el balanceo de carga L4 simple (TCP) no es suficiente porque gRPC mantiene una conexión HTTP/2 multiplexada persistente. Por ello se implementa una estrategia en dos niveles:
 
 ```
+```
                       Tráfico Externo (Clientes)
                                  |
                                  v
-                 [Balanceador L4 / DNS Round Robin]
+                 [Balanceador L4 / VIP Flotante / DNS]
                                  |
                  +---------------+---------------+
                  |                               |
                  v                               v
-        [Envoy Proxy / Ingress A]       [Envoy Proxy / Ingress B]
-        (Balanceo L7 gRPC-Web / HTTP/2) (Balanceo L7 gRPC-Web / HTTP/2)
-                 |                               |
-                 +---------------+---------------+
-                                 |
-            +--------------------+--------------------+
-            | (Round-Robin / Least Conn)              | (Header-based: X-Room-Id)
-            v                                         v
-   [Go Gateway Clúster]                      [Rust Engine Clúster]
-   (Instancia 1, 2, 3...)                    (Worker 1, Worker 2...)
+        [Go Gateway Clúster]            [Rust Engine Clúster]
+        (Matchmaking & Auth)            (Salas de Juego 20 Hz)
+        (Client-Side LB / Least Conn)   (Directo con RoomTicket)
 ```
 
-### 3.1 Nivel 1: Capa Perimetral e Ingress (L4 + L7)
-- **Capa L4 (IP / TCP)**:
-  - En Nube: AWS Network Load Balancer (NLB) o GCP Cloud Load Balancing que distribuye los paquetes TCP brutos entre los nodos proxy mediante Anycast/VIP.
-  - En LAN / Bare Metal: Keepalived con VRRP compartiendo una IP Virtual Flotante (VIP).
-- **Capa L7 (gRPC L7 Load Balancing vía Envoy)**:
-  - Envoy inspecciona los frames HTTP/2 de gRPC y realiza balanceo **por llamada RPC individual**, no por conexión TCP.
-  - Algoritmo: **Least Request** con sondeo activo para el Gateway en Go.
-
-### 3.2 Nivel 2: Balanceo hacia el Motor de Juego (Stateful Hash Routing)
-- Los servidores de juego en Rust son **stateful por sala** (una partida vive en la memoria de un worker específico).
-- **Enrutamiento por Cabecera (`X-Room-ID`)**:
-  - Cuando el cliente se conecta al stream de Rust, incluye la cabecera `X-Room-ID: <uuid>`.
-  - Envoy utiliza **Consistent Hashing** sobre el `X-Room-ID` o consulta la tabla de rutas de Redis para enviar al jugador exactamente al worker de Rust que aloja esa sala.
+### 3.1 Nivel 1: Capa de Acceso y Balanceo de Carga (L4 & Client-Side)
+- **Capa L4 (IP / TCP / DNS)**:
+  - En Nube: AWS Network Load Balancer (NLB) o IP Pública Elástica distribuyendo el tráfico gRPC directo hacia las réplicas de Go.
+  - En LAN / Bare Metal: Keepalived con VRRP compartiendo una IP Virtual Flotante (VIP), o descubrimiento automático por mDNS.
 - **Client-Side Load Balancing (Nativo en gRPC)**:
-  - El cliente gRPC en Python y el cliente en Go utilizan el *resolver* nativo de gRPC (`dns:///` o Service Discovery) para alternar dinámicamente entre réplicas saludables si un canal cae.
+  - Los clientes en Tauri (TypeScript) y Python utilizan el resolver nativo de gRPC (`dns:///` o lista de hosts). Si una instancia de Gateway cae, el canal gRPC del cliente conmuta automáticamente a la réplica saludable sin necesidad de proxies L7 intermedios.
+
+### 3.2 Nivel 2: Conexión Directa al Motor de Juego (Data Plane Desacoplado)
+- Los servidores de juego en Rust son **stateful por sala** (la partida vive en la memoria de un worker específico).
+- **Desacoplamiento con RoomTicket**:
+  - Al unirse a una sala, el Gateway Go entrega un ticket firmado que contiene la dirección IP:Puerto directa del worker Rust asignado (`RustEndpoint`).
+  - El cliente se conecta **directamente** al worker de Rust para el streaming a 20 Hz, evitando saltos de red o intermediarios que agreguen latencia.
 
 ---
 
@@ -169,8 +159,8 @@ Para asegurar alta disponibilidad y resiliencia, la detección opera en 3 horizo
 
 1. **Sondas Activas de Salud (*Health Endpoint Monitoring*)**:
    - Cada nodo en Go y Rust implementa el estándar `grpc.health.v1.Health`.
-   - Envoy y el Gateway ejecutan sondeos periódicos cada 2 segundos:
-     - Si un nodo falla 2 sondeos consecutivos, se marca inmediatamente como `UNHEALTHY` y se saca del pool de enrutamiento en menos de 500 ms.
+   - El orquestador / Gateway ejecuta sondeos periódicos cada 2 segundos hacia los workers registrados:
+     - Si un worker falla 2 sondeos consecutivos, se saca del pool de asignación en menos de 500 ms.
 2. **Goroutine Heartbeat Monitor en Go**:
    - Una goroutine en segundo plano monitorea el pool de conexiones de PostgreSQL (`db.PingContext(ctx)`) y los workers de Rust registrados.
    - Si detecta que un worker de Rust no reporta estado en 3 segundos, lo declara caído.
@@ -181,7 +171,7 @@ Para asegurar alta disponibilidad y resiliencia, la detección opera en 3 horizo
 
 | Componente Caído | Impacto Inmediato | Detección | Estrategia de Mitigación / Auto-recuperación |
 | :--- | :--- | :--- | :--- |
-| **Instancia Go Gateway** | Ninguno para jugadores activos; nuevos logins redirigidos. | Envoy Health Check (< 2s). | Envoy redirige peticiones a réplicas sanas de Go. Go es stateless; no se pierde información de sesión. |
+| **Instancia Go Gateway** | Ninguno para jugadores activos; nuevos logins atendidos por réplicas. | Client-side gRPC check (< 1s) o Keepalived VIP failover. | El cliente gRPC conmuta a la réplica Go sana inmediatamente. Go es stateless; no se pierde información de sesión. |
 | **Worker Rust (Sala de Juego)** | Pausa de 1 a 2 segundos en los clientes de esa sala. | Pérdida de tick en cliente + Timeout de heartbeat en Go. | 1. Clientes inician reconexión con *Exponential Backoff*.<br>2. Go detecta el crash y aprovisiona un nuevo worker Rust inyectándole el último snapshot de Redis.<br>3. Los clientes se reenganchan transparentemente con su `RoomTicket`. |
 | **Base de Datos PostgreSQL** | Imposibilidad temporal de escribir historiales nuevos. | Error en `db.PingContext()`. | 1. Disyuntor (**Circuit Breaker**) se abre en Go, evitando saturar la BD.<br>2. Los eventos de fin de partida se encolan en memoria/buffer local.<br>3. Promoción automática de réplica Hot Standby vía Patroni/Keepalived.<br>4. Al restablecerse, el Worker Pool vacía la cola a Postgres. |
 
@@ -197,9 +187,8 @@ Para la entrega académica de la cátedra de Computación en la Nube, se detalla
 - **Propósito:** Mostrar la topología física y lógica de la nube, nodos de cómputo, contenedores Docker, puertos y protocolos de red.
 - **Nodos requeridos:**
   - `<<device>> Clientes`: Estaciones de trabajo corriendo Tauri y Python.
-  - `<<executionEnvironment>> Ingress / Load Balancer`: Envoy Proxy expuesto en puertos 443 / 50051.
-  - `<<device>> Nodo Clúster Gateway (Go)`: Contenedores con el API Gateway, Worker Pool y Swagger UI.
-  - `<<device>> Nodo Clúster Simulación (Rust)`: Contenedores con Tonic gRPC y el bucle a 20 Hz.
+  - `<<device>> Nodo Clúster Gateway (Go)`: Contenedores con el API Gateway, Worker Pool y Swagger UI expuesto en puertos :50051 / :8080.
+  - `<<device>> Nodo Clúster Simulación (Rust)`: Contenedores con Tonic gRPC y el bucle a 20 Hz expuestos en puerto :50052.
   - `<<device>> Nodo Base de Datos`: Contenedor PostgreSQL 16 con volumen persistente y réplica standby.
   - `<<device>> Nodo Memoria / Caché`: Instancia Redis para coordinación volátil y snapshots.
 
@@ -211,18 +200,16 @@ flowchart TD
     end
 
     subgraph CloudInfra["«cloud provider / virtual network» VPC Privada"]
-        subgraph IngressNode["«device» Capa de Balanceo & Ingress"]
-            Envoy["«executionEnvironment»\nEnvoy Proxy Clúster\n:443 / :50051"]
-        end
+        VIPNode["«access»\nIP Virtual (VIP) / DNS"]
 
         subgraph ControlPlaneNode["«device» Clúster Control Plane (Go)"]
-            GoInst1["«executionEnvironment»\nGateway Go (Replica 1)\n- Worker Pool\n- Swagger UI"]
-            GoInst2["«executionEnvironment»\nGateway Go (Replica 2)"]
+            GoInst1["«executionEnvironment»\nGateway Go (Replica 1)\n:50051\n- Worker Pool\n- Swagger UI"]
+            GoInst2["«executionEnvironment»\nGateway Go (Replica 2)\n:50051"]
         end
 
         subgraph DataPlaneNode["«device» Clúster Data Plane (Rust)"]
-            RustWorker1["«executionEnvironment»\nRust Engine (Partidas 1..N)\n- Tokio 20Hz\n- Chat Stream"]
-            RustWorker2["«executionEnvironment»\nRust Engine (Partidas N+1..M)"]
+            RustWorker1["«executionEnvironment»\nRust Engine (Partidas 1..N)\n:50052\n- Tokio 20Hz\n- Chat Stream"]
+            RustWorker2["«executionEnvironment»\nRust Engine (Partidas N+1..M)\n:50052"]
         end
 
         subgraph StateNode["«device» Capa de Estado Rápido"]
@@ -235,13 +222,14 @@ flowchart TD
         end
     end
 
-    TauriClient -->|gRPC / HTTP/2| Envoy
-    PythonClient -->|gRPC / HTTP/2| Envoy
+    TauriClient -->|gRPC / HTTP/2| VIPNode
+    PythonClient -->|gRPC / HTTP/2| VIPNode
 
-    Envoy -->|gRPC L7 Least-Req| GoInst1
-    Envoy -->|gRPC L7 Least-Req| GoInst2
-    Envoy -->|gRPC Stream (X-Room-ID)| RustWorker1
-    Envoy -->|gRPC Stream (X-Room-ID)| RustWorker2
+    VIPNode -->|Client-Side LB / Failover| GoInst1
+    VIPNode -->|Client-Side LB / Failover| GoInst2
+
+    TauriClient -.->|gRPC Stream Directo (RoomTicket)| RustWorker1
+    PythonClient -.->|gRPC Stream Directo (RoomTicket)| RustWorker1
 
     GoInst1 <-->|Pub/Sub Heartbeat| RedisInst
     GoInst2 <-->|Pub/Sub Heartbeat| RedisInst

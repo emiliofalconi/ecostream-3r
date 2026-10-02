@@ -19,39 +19,36 @@ Para resolver esto sin cuellos de botella ni caídas catastróficas, se implemen
 Dependiendo del entorno de despliegue (Nube gestionada o Infraestructura propia/Docker), se contemplan dos soluciones estándar de la industria:
 
 ### 2.1 En Nube (AWS, GCP, Azure, OCI)
-- **Layer 4 / Layer 7 Managed Load Balancer (NLB / ALB / Cloud Load Balancing)**:
+- **Layer 4 Managed Load Balancer (NLB / Cloud Load Balancing) o DNS Anycast**:
   - El proveedor de nube asigna una dirección IP virtual (VIP) altamente distribuida backed por BGP Anycast en múltiples Availability Zones (AZs).
-  - Distribuye el tráfico entrante a un grupo de autoescalado (**Auto Scaling Group / Deployment**) de réplicas de Gateway Envoy/Go.
+  - Distribuye el tráfico gRPC directo entrante a las réplicas del Gateway Go.
 
 ### 2.2 En Entorno Universitario / Bare-Metal / Docker Multi-Host
 - **VRRP / IP Flotante (Keepalived / CARP)** o **DNS Round-Robin con Health Checks**:
-  - Dos o más instancias de Proxy/Gateway comparten una **IP Virtual (VIP)**.
+  - Dos o más instancias de Gateway comparten una **IP Virtual (VIP)**.
   - Si el nodo primario falla o deja de responder al heartbeat en menos de 1 segundo, el nodo secundario toma la IP flotante automáticamente vía gratuitous ARP.
 - **Client-Side Load Balancing (Nativo en gRPC)**:
   - gRPC posee capacidades nativas de resolución de nombres (`dns:///` o Service Discovery tipo Consul/CoreDNS).
-  - El cliente recibe una lista de endpoints backend vivos. Si un gateway o servidor no responde, el canal gRPC del cliente conmuta automáticamente a la siguiente dirección de la lista sin intervención del usuario.
+  - El cliente recibe una lista de endpoints backend vivos. Si un gateway no responde, el canal gRPC del cliente conmuta automáticamente a la siguiente dirección de la lista sin intermediarios ni proxies.
 
 ```mermaid
 flowchart TD
-    subgraph Clients["Capa de Clientes (TypeScript & Python)"]
-        C1["Cliente TS"]
-        C2["Cliente Py"]
+    subgraph Clients["Capa de Clientes (Tauri TS & Python)"]
+        C1["Cliente TS (Tauri)"]
+        C2["Cliente Python"]
     end
 
-    subgraph EdgeLayer["Capa Perimetral de Alta Disponibilidad"]
-        VIP["Dirección IP Virtual (VIP) / DNS Failover"]
-        Proxy1["Envoy Proxy 1 (Activo)"]
-        Proxy2["Envoy Proxy 2 (Activo / Backup)"]
+    subgraph EdgeLayer["Capa de Acceso de Alta Disponibilidad"]
+        VIP["Dirección IP Virtual (VIP) / DNS Round-Robin"]
     end
 
     subgraph GatewayCluster["Cluster de Gateways Stateless (Go)"]
         GW1["Go Gateway (Instancia A)"]
         GW2["Go Gateway (Instancia B)"]
-        GW3["Go Gateway (Instancia C)"]
     end
 
     subgraph ServiceMesh["Service Discovery & Registry"]
-        Consul["Service Registry / Health Monitor (Consul o Redis Sentinel)"]
+        Consul["Service Registry / Health Monitor (Redis / mDNS)"]
     end
 
     subgraph EngineCluster["Cluster de Motores de Simulación (Rust)"]
@@ -64,15 +61,10 @@ flowchart TD
         PGStandby[("PostgreSQL Réplica (Hot Standby)")]
     end
 
-    C1 -->|Petición| VIP
-    C2 -->|Petición| VIP
-    VIP -->|Round-Robin / Health-check| Proxy1
-    VIP -->|Failover automático| Proxy2
-
-    Proxy1 --> GW1
-    Proxy1 --> GW2
-    Proxy2 --> GW2
-    Proxy2 --> GW3
+    C1 -->|gRPC Directo HTTP/2| VIP
+    C2 -->|gRPC Directo HTTP/2| VIP
+    VIP -->|Conexión Directa| GW1
+    VIP -->|Conexión Directa| GW2
 
     GW1 <-->|Registro y Heartbeat| Consul
     GW2 <-->|Registro y Heartbeat| Consul
@@ -81,6 +73,9 @@ flowchart TD
 
     GW1 -->|Asigna Sala| RE1
     GW2 -->|Asigna Sala| RE2
+
+    C1 -.->|gRPC Stream Directo con RoomTicket| RE1
+    C2 -.->|gRPC Stream Directo con RoomTicket| RE1
 
     GW1 -->|Escrituras| PGPrimary
     GW2 -->|Escrituras| PGPrimary
@@ -105,21 +100,22 @@ flowchart TD
 Para proteger aún más el sistema de una caída total:
 1. **Control Plane (Go Gateway)**: Solo interviene al inicio (Login, Matchmaking, Creación de Sala).
 2. **Data Plane Directo (Rust Game Loop)**:
-   - Una vez que el jugador obtiene el token de sala (`RoomTicket`), el cliente puede conectarse **directamente al stream gRPC del Rust Game Server** asignado (o a través del proxy Envoy que balancea por cabecera `X-Room-ID`).
+   - Una vez que el jugador obtiene el token de sala (`RoomTicket`), el cliente se conecta **directamente al stream gRPC nativo del Rust Game Server** asignado.
    - Si el orquestador en Go cae temporalmente, **las partidas en curso en Rust continúan ejecutándose con normalidad** porque la lógica del ciclo de juego en tiempo real no depende sincrónicamente de Go.
 
 ---
 
-## 5. El Cliente TypeScript: ¿Tauri vs Navegador Web Puro?
+## 5. El Cliente Desktop: Tauri (TypeScript) y Python Nativo
 
-Efectivamente, **Tauri utiliza TypeScript (React, Vue, Svelte o Vanilla TS/Vite) para toda la interfaz visual y lógica de presentación**.
+Efectivamente, **Tauri utiliza TypeScript (React, Svelte o Vanilla TS/Vite) para toda la interfaz visual y lógica de presentación**, mientras que Python utiliza `pygame` y `grpcio`.
 
-### ¿Por qué Tauri es una opción superior para este proyecto?
-1. **gRPC Nativo sin Envoy Proxy en el Cliente**:
-   - En navegadores web estándar (Chrome/Firefox), no existe acceso a sockets HTTP/2 arbitrarios, obligando a usar `gRPC-Web` + un proxy traductor (Envoy).
-   - Con **Tauri**, la UI está escrita en **TypeScript**, pero el proceso de fondo local (Tauri Core) corre en Rust y tiene acceso a sockets de red nativos. Puede conectarse directamente por **gRPC HTTP/2 puro con streaming bidireccional** hacia los servidores Go y Rust, eliminando la necesidad de Envoy para el cliente de escritorio.
+### Ventajas de una Arquitectura Directa sin Proxies:
+1. **gRPC Nativo Directo sin Proxies Intermedios**:
+   - Con **Tauri**, la UI está escrita en **TypeScript**, pero el proceso de fondo local (Tauri Core) tiene acceso a sockets de red nativos. Puede conectarse directamente por **gRPC HTTP/2 puro con streaming bidireccional** hacia los servidores Go y Rust, logrando latencia mínima y cero sobrecarga de proxies adicionales.
 2. **Rendimiento y Menor Consumo de Recursos**:
    - A diferencia de Electron (que pesa cientos de megabytes y consume mucha RAM), Tauri usa el Webview nativo del sistema operativo (WebKitGTK en Linux, WebView2 en Windows), pesando unos pocos megabytes.
+3. **Client-Side Load Balancing Integrado**:
+   - Ambos clientes resuelven réplicas gRPC de forma nativa sin intermediarios.
 ---
 
 ---
@@ -285,7 +281,7 @@ Se han seleccionado 5 patrones canónicos del catálogo de arquitectura en la nu
 
 | # | Patrón Cloud-Native | Dónde se aplica en el Sistema | Motivo y Razón Palpable |
 | :-: | :--- | :--- | :--- |
-| **1** | **API Gateway Pattern** | Servidor Go + Envoy Proxy | Proporciona un único punto de entrada unificado para los clientes (Tauri y Python), abstrayendo la complejidad interna de múltiples workers en Rust y PostgreSQL. Centraliza autenticación JWT, rate-limiting y enrutamiento. |
+| **1** | **API Gateway Pattern** | Servidor Go (Clúster Stateless) | Proporciona un único punto de entrada unificado para los clientes (Tauri y Python), abstrayendo la complejidad interna de múltiples workers en Rust y PostgreSQL. Centraliza autenticación JWT, rate-limiting y enrutamiento directo. |
 | **2** | **Circuit Breaker (Disyuntor)** | Cliente / Gateway Go hacia Rust y Postgres (`sony/gobreaker`) | Si el clúster de base de datos o un worker de Rust colapsa, evita inundarlo de peticiones en cascada (*cascading failure*). El disyuntor se "abre" tras 3 fallos consecutivos, devolviendo un error controlado inmediato y permitiendo que el sistema se recupere. |
 | **3** | **Health Endpoint Monitoring Pattern** | Servidor Go (`/healthz`, `/readyz`, gRPC Health v1) | Permite que orquestadores de contenedores (Kubernetes / Docker Swarm / Load Balancers) sondeen si el contenedor está vivo (*Liveness*) y listo para recibir tráfico (*Readiness*). Si falla, la nube lo reinicia automáticamente. |
 | **4** | **Authoritative Server Pattern** | Servidor de Simulación Rust | Patrón nativo de juegos distribuidos en red: toda la física, lógica de fluidos, cálculo de consumo de agua y validación de las 3R reside en el servidor. Evita desincronizaciones entre jugadores y hace imposible el engaño (*cheating*). |
