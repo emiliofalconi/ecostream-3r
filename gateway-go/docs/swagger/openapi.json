@@ -1,0 +1,201 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "EcoStream 3R - Control Plane & Gateway API",
+    "version": "1.0.0",
+    "description": "API REST y gRPC Gateway para la plataforma de preservación hídrica EcoStream 3R (Cátedra Computación en la Nube - UCAB)."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Servidor de Desarrollo Local"
+    }
+  ],
+  "tags": [
+    { "name": "Health", "description": "Endpoints de sondeo y vitalidad (Liveness & Readiness)" },
+    { "name": "Auth", "description": "Registro, inicio de sesión y validación JWT" },
+    { "name": "Matchmaking", "description": "Creación, unión y consulta de salas/lobbies" }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Sondeo de Vitalidad (Liveness Probe)",
+        "description": "Retorna 200 OK si el gateway Go está en ejecución y respondiendo.",
+        "responses": {
+          "200": {
+            "description": "Gateway saludable",
+            "content": {
+              "application/json": {
+                "example": { "status": "UP", "goroutines": 12, "timestamp": "2026-10-02T22:30:00Z" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": ["Health"],
+        "summary": "Sondeo de Disponibilidad (Readiness Probe)",
+        "description": "Verifica conectividad activa hacia PostgreSQL 16 y workers de simulación Rust.",
+        "responses": {
+          "200": {
+            "description": "Todos los servicios backend disponibles",
+            "content": {
+              "application/json": {
+                "example": { "status": "READY", "database": "CONNECTED", "simulation_workers": 2 }
+              }
+            }
+          },
+          "503": {
+            "description": "Servicio no disponible temporalmente (Circuit Breaker activado)"
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Registrar nuevo usuario",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username", "email", "password"],
+                "properties": {
+                  "username": { "type": "string", "example": "VictorHydraulic" },
+                  "email": { "type": "string", "example": "victor@ucab.edu.ve" },
+                  "password": { "type": "string", "example": "SuperEcoPass123!" },
+                  "default_role": { "type": "integer", "enum": [1, 2, 3, 4], "example": 2 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Registro exitoso",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "message": "Usuario registrado exitosamente",
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  "user": { "user_id": "usr_9481a", "username": "VictorHydraulic", "default_role": 2 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Iniciar sesión y obtener JWT",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["username_or_email", "password"],
+                "properties": {
+                  "username_or_email": { "type": "string", "example": "victor@ucab.edu.ve" },
+                  "password": { "type": "string", "example": "SuperEcoPass123!" }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Inicio de sesión concedido",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
+                  "expires_at_unix": 1790994000
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rooms": {
+      "get": {
+        "tags": ["Matchmaking"],
+        "summary": "Listar salas públicas disponibles",
+        "parameters": [
+          { "name": "token", "in": "query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista de salas",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "rooms": [
+                    {
+                      "room_id": "rm_8832",
+                      "room_code": "AGUA42",
+                      "room_name": "Riego Agrocomunitario",
+                      "status": 1,
+                      "max_players": 4,
+                      "players": [{ "username": "VictorHydraulic", "is_host": true }]
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Matchmaking"],
+        "summary": "Crear nueva sala de juego",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "room_name"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "room_name": { "type": "string", "example": "Misión Embalse Norte" },
+                  "selected_role": { "type": "integer", "example": 1 },
+                  "max_players": { "type": "integer", "example": 4 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sala creada",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "room": {
+                    "room_id": "rm_8832",
+                    "room_code": "AGUA42",
+                    "simulation_endpoint": "localhost:50052"
+                  },
+                  "room_ticket": "tkt_secret_sim_token_992"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

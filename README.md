@@ -88,11 +88,12 @@ Para consultar la planificación técnica exhaustiva y el estado de avance, visi
   - [x] Script DDL `deployments/postgres/schema.sql` (tablas: `users`, `rooms`, `matches`, `audit_logs`).
   - [x] Estructura de tablas para asignación stateless de salas y workers (agregado por Victor).
   - [x] Configuración de variables de entorno `.env.example`.
-- [ ] **Fase 3: Implementación del Gateway y Orquestador (Go)**
-  - [ ] Endpoints de autenticación, matchmaking y registro en Postgres.
-  - [ ] Coordinación de salas stateless sobre Postgres/Redis para cluster redundante (agregado por Victor).
-  - [ ] Worker pools con Goroutines y servidores de salud HTTP/gRPC.
-  - [ ] Swagger UI incrustado.
+- [x] **Fase 3: Implementación del Gateway y Orquestador (Go)**
+  - [x] Endpoints de autenticación, matchmaking y registro en Postgres.
+  - [x] Coordinación de salas stateless sobre Postgres/Redis para cluster redundante (agregado por Victor).
+  - [x] Worker pools con Goroutines y servidores de salud HTTP/gRPC (`/healthz`, `/readyz`).
+  - [x] Circuit Breakers (`sony/gobreaker`) hacia PostgreSQL y motor Rust.
+  - [x] Swagger UI incrustado interactivo (`http://localhost:8080/swagger/`).
 - [ ] **Fase 4: Motor de Simulación en Tiempo Real (Rust)**
   - [ ] Servidor Tonic gRPC con streaming bidireccional a 20 Hz.
   - [ ] Lógica autoritativa de balance hídrico, cálculo de RTT y validación de colisiones.
