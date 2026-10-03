@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EcoStream 3R - AquaGuardians (Tauri Client)</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <!-- HUD SUPERIOR -->
+  <header>
+    <div class="brand">
+      <span class="brand-icon">💧</span>
+      <div>
+        <h1 class="brand-title">EcoStream 3R</h1>
+        <small style="color: #94a3b8; font-size: 11px;">Misión: Preservación Hídrica</small>
+      </div>
+    </div>
+
+    <div class="hud-metrics">
+      <div class="metric-pill">
+        <span class="metric-label">Embalse Principal</span>
+        <span id="txtReservoir" class="metric-value reservoir">100.0%</span>
+      </div>
+
+      <div class="metric-pill">
+        <span class="metric-label">Pureza de Agua</span>
+        <span id="txtPurity" class="metric-value purity">96.0%</span>
+      </div>
+
+      <div class="metric-pill">
+        <span class="metric-label">Puntaje Eco</span>
+        <span id="txtScore" class="metric-value score">0 pts</span>
+      </div>
+
+      <div class="metric-pill">
+        <span class="metric-label">Ahorro Fugas</span>
+        <span id="txtSaved" class="metric-value" style="color: #38bdf8;">0 L</span>
+      </div>
+
+      <div id="rttWidget" class="rtt-widget">
+        <div class="rtt-dot"></div>
+        <span id="txtPing">Ping: 2 ms</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- CANVAS DEL JUEGO -->
+  <main>
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- BARRA DE CONTROL 3R INFERIOR -->
+    <div class="action-panel">
+      <button id="btnReduce" class="action-btn reduce">
+        <span>🔧 1. Reducir Fuga [Espacio]</span>
+      </button>
+      <button id="btnReuse" class="action-btn reuse">
+        <span>🌱 2. Reusar a Riego [R]</span>
+      </button>
+      <button id="btnRecycle" class="action-btn recycle">
+        <span>⚗️ 3. Reciclar Filtros [F]</span>
+      </button>
+    </div>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -2,101 +2,92 @@
 
 > **Proyecto:** EcoStream 3R - AquaGuardians 💧🌱  
 > **Cátedra:** Computación en la Nube (UCAB)  
-> **Estado:** Fase 1 & 2 Completadas  
+> **Estado:** Fases 0, 1, 2, 3, 4 y 5 Completadas  
 
 ---
 
-## 📜 1. Catálogo de Scripts y Funcionalidades
+## 📜 1. Catálogo de Scripts y Componentes
 
-El proyecto cuenta con scripts automatizados en `scripts/` y `client-python/` diseñados para ser ejecutados de forma portable en Windows, Linux o macOS:
+El proyecto cuenta con scripts automatizados y clientes diseñados para ser ejecutados de forma portable en Windows, Linux o macOS:
 
-| Script / Archivo | Ubicación | Funcionalidad Principal | Cómo se ejecuta |
+| Script / Componente | Ubicación | Funcionalidad Principal | Cómo se ejecuta |
 | :--- | :--- | :--- | :--- |
-| **`build_protos.py`** | [`scripts/build_protos.py`](../scripts/build_protos.py) | **Compilador de Protocol Buffers:** Instala automáticamente `grpcio-tools`, compila todos los archivos `.proto` a stubs de Python tipados (`*_pb2.py`, `*.pyi`) y sincroniza los contratos para el motor de Rust. | `python scripts/build_protos.py` |
-| **`test_contracts.py`** | [`scripts/test_contracts.py`](../scripts/test_contracts.py) | **Suite de Validación de Contratos:** Verifica la serialización binaria de las acciones 3R (Reducir, Reusar, Reciclar), la estructura del `GameWorldState` a 20 Hz, el cálculo de latencia RTT y la validez de la especificación OpenAPI 3.0. | `python scripts/test_contracts.py` |
-| **`test_live_grpc.py`** | [`scripts/test_live_grpc.py`](../scripts/test_live_grpc.py) | **Test de Integración en Vivo:** Levanta un servidor gRPC en background y ejecuta un cliente interactivo que simula el ciclo de vida completo: Login JWT, Matchmaking (Lobby `AGUA42`) y streaming continuo a 20 Hz con Ping-Pong de telemetría. | `python scripts/test_live_grpc.py` |
-| **`mock_server.py`** | [`client-python/mock_server.py`](../client-python/mock_server.py) | **Servidor Simulado Standalone:** Servidor gRPC que implementa los servicios `AuthService`, `MatchmakingService` y `GameSimulationService` en el puerto `50051`. Útil para desarrollar clientes sin depender de Go o Rust. | `python client-python/mock_server.py` |
-| **`test_client.py`** | [`client-python/test_client.py`](../client-python/test_client.py) | **Cliente Interactivo de Consola:** Se conecta a un servidor gRPC, despacha acciones hídricas en tiempo real y calcula la latencia en vivo (RTT) en milisegundos. | `python client-python/test_client.py` |
+| **`build_protos.py`** | [`scripts/build_protos.py`](../scripts/build_protos.py) | **Compilador de Protocol Buffers:** Instala dependencias, compila todos los `.proto` a stubs de Python tipados (`*_pb2.py`, `*.pyi`) y sincroniza los contratos para el motor de Rust. | `python scripts/build_protos.py` |
+| **`test_contracts.py`** | [`scripts/test_contracts.py`](../scripts/test_contracts.py) | **Suite de Validación de Contratos:** Verifica la serialización binaria de las acciones 3R, el `GameWorldState` a 20 Hz, la telemetría RTT y la validez de OpenAPI 3.0. | `python scripts/test_contracts.py` |
+| **`test_live_grpc.py`** | [`scripts/test_live_grpc.py`](../scripts/test_live_grpc.py) | **Test de Integración gRPC en Vivo:** Simula el ciclo de vida completo: Login JWT, Matchmaking y streaming continuo a 20 Hz con Ping-Pong de telemetría. | `python scripts/test_live_grpc.py` |
+| **`main_game.py` (Pygame / Bot)** | [`client-python/main_game.py`](../client-python/main_game.py) | **Cliente Gráfico Pygame & Bot Autónomo:** Renderizado 2D de zonas 3R, controles interactivos de teclado (`WASD`, `Espacio`, `R`, `F`), widget de latencia RTT y modo `--bot` para pruebas de estrés. | `python client-python/main_game.py` (Humano)<br>`python client-python/main_game.py --bot` (Bot) |
+| **Cliente Web / Tauri** | [`client-tauri/`](../client-tauri/) | **Cliente Web / Desktop (TS + Canvas 2D):** HUD con telemetría en vivo, canvas reactivo a 60 FPS con animación hídrica y acciones 3R. | `cd client-tauri && npm run dev` |
+| **`mock_server.py`** | [`client-python/mock_server.py`](../client-python/mock_server.py) | **Servidor Simulado Standalone:** Servidor gRPC que implementa los servicios en el puerto `50051` para pruebas aisladas. | `python client-python/mock_server.py` |
 
 ---
 
 ## 🚀 2. Guía Paso a Paso de Despliegue y Ejecución Local
 
 ### Prerrequisitos
-1. **Python 3.10+** (instalado y en el PATH).
-2. **Docker Desktop** (abierto y en ejecución si se desea probar la base de datos).
+1. **Python 3.10+** con `pygame-ce` (`pip install pygame-ce grpcio grpcio-tools`).
+2. **Node.js 18+** (para el cliente Web/Tauri).
+3. **Docker Desktop** (abierto y en ejecución).
 
 ---
 
-### Paso 2.1: Levantar Todo el Stack (PostgreSQL 16, Gateway Go y Engine Rust)
+### Paso 2.1: Levantar Todo el Stack en Docker
 Abre una terminal en la raíz del proyecto y ejecuta:
 ```powershell
 docker compose -f deployments/docker-compose.yml up -d --build
 ```
 
-* **PostgreSQL 16:** Corriendo en `localhost:5432` (Base de datos: `ecostream_db`, Usuario: `ecostream_user`, Pass: `ecostream_secure_pass`).
-* **Gateway en Go:** Corriendo en `http://localhost:8080` (HTTP REST) y `localhost:50051` (gRPC).
+Servicios activos:
+* **PostgreSQL 16:** `localhost:5432` (`ecostream_db`).
+* **Gateway en Go:** `http://localhost:8080` (HTTP REST) y `localhost:50051` (gRPC).
   * **Swagger UI interactivo:** [http://localhost:8080/swagger/](http://localhost:8080/swagger/)
   * **Health Liveness:** `http://localhost:8080/healthz`
   * **Health Readiness:** `http://localhost:8080/readyz`
-* **Motor de Simulación en Rust:** Corriendo en `localhost:50052` (Streaming gRPC a 20 Hz con bucle autoritativo).
-* **pgAdmin 4:** Accesible en [http://localhost:5050](http://localhost:5050)
-  * **Email:** `admin@ecostream.ucab.ve`
-  * **Password:** `admin123`
+* **Motor de Simulación en Rust:** `localhost:50052` (Streaming gRPC autoritativo a 20 Hz).
+* **pgAdmin 4:** [http://localhost:5050](http://localhost:5050) (Email: `admin@ecostream.ucab.ve`, Pass: `admin123`).
 
 ---
 
-### Paso 2.2: Recompilar Protocol Buffers (Opcional si modificas algún `.proto`)
-Si agregas nuevos campos o mensajes en `proto/ecostream/v1/`:
+### Paso 2.2: Ejecutar el Cliente Gráfico de Python (Modo Jugador Humano)
+Para jugar interactivamente conectado al motor de simulación Rust a 20 Hz:
+```powershell
+python client-python/main_game.py
+```
+* **Controles:**
+  * `W, A, S, D` / Flechas: Mover avatar del jugador.
+  * `Espacio`: **1. Reducir** (Reparar fugas de agua más cercanas).
+  * `R`: **2. Reusar** (Conmutar válvula de aguas grises hacia huertos).
+  * `F`: **3. Reciclar** (Cargar filtros de carbón/UV en la planta biológica).
+  * `ESC`: Salir.
+
+---
+
+### Paso 2.3: Ejecutar el Modo Bot Autónomo (Pruebas de Carga y Evaluación)
+Para ejecutar un agente con inteligencia artificial que detecta y repara fugas automáticamente:
+```powershell
+python client-python/main_game.py --bot
+```
+
+---
+
+### Paso 2.4: Ejecutar el Cliente Web / Tauri (TypeScript + Canvas 2D)
+Para iniciar el servidor de desarrollo Vite con la interfaz visual reactiva:
+```powershell
+cd client-tauri
+npm run dev
+```
+Abre [http://localhost:5173](http://localhost:5173) en el navegador.
+
+---
+
+### Paso 2.5: Recompilar Protocol Buffers (Opcional)
+Si modificas algún archivo `.proto` en `proto/ecostream/v1/`:
 ```powershell
 python scripts/build_protos.py
 ```
 
 ---
 
-### Paso 2.3: Ejecutar la Suite de Pruebas Unitarias de Contratos
-Valida que la serialización gRPC y especificación OpenAPI funcionen:
+### Paso 2.6: Ejecutar la Suite de Pruebas Unitarias de Contratos
 ```powershell
 python scripts/test_contracts.py
 ```
-
----
-
-### Paso 2.4: Ejecutar la Prueba Integrada Cliente-Servidor en Vivo
-Para ver la simulación en tiempo real a 20 Ticks/segundo y telemetría RTT:
-```powershell
-python scripts/test_live_grpc.py
-```
-
-*(O de forma separada: Terminal 1: `python client-python/mock_server.py` y Terminal 2: `python client-python/test_client.py`)*.
-
----
-
-## 🗺️ 3. Cómo Continuar desde este Punto (Ruta para la Siguiente Sesión)
-
-El proyecto se encuentra en un punto ideal de transición: los contratos y la persistencia están listos. A partir de aquí, las opciones de desarrollo son:
-
-```mermaid
-flowchart TD
-    Inicio["Base Actual (Fase 1 & 2 Listas)"] --> Gateway["Fase 3: Gateway en Go"]
-    Inicio --> Engine["Fase 4: Motor Rust"]
-    Inicio --> ClientePy["Fase 5.1: Bot Pygame en Python"]
-
-    Gateway -->|"Sirve Swagger & Coordina"| Engine
-    Engine -->|"Streaming 20Hz"| ClientePy
-```
-
-### 1. Iniciar Fase 3: Gateway y Orquestador en Go
-* Inicializar `go mod init github.com/Makmadon/ecostream-3r/gateway-go` en `gateway-go/`.
-* Conectar el Gateway a PostgreSQL 16 usando el esquema `deployments/postgres/schema.sql`.
-* Servir **Swagger UI** en `http://localhost:8080/swagger/` incrustando `docs/swagger/openapi.json`.
-* Implementar los endpoints de salud `/healthz` y `/readyz` con monitoreo de goroutines.
-
-### 2. Iniciar Fase 4: Motor de Simulación en Rust
-* Inicializar proyecto Cargo en `engine-rust/` con dependencias `tonic`, `tokio`, `prost`.
-* Configurar `build.rs` para compilar los `.proto` de `engine-rust/proto/`.
-* Implementar el bucle autoritativo de 20 Hz con la lógica de balance hídrico del embalse.
-
-### 3. Iniciar Fase 5: Cliente Pygame / Bot en Python
-* Crear `client-python/main_game.py` con ventana Pygame renderizando el embalse, las tuberías con fugas y los controles de teclado.
-* Conectar Pygame al stream gRPC utilizando los stubs ya generados en `client-python/proto/`.

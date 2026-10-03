@@ -16,8 +16,8 @@
 | **Fase 2** | Infraestructura y Base de Datos (Docker & PostgreSQL 16) | ✅ **Completada** | 100% |
 | **Fase 3** | Control Plane & Gateway Orquestador (Go 1.22+) | ✅ **Completada** | 100% |
 | **Fase 4** | Motor de Simulación Autoritativa a 20 Hz (Rust Tokio/Tonic) | ✅ **Completada** | 100% |
-| **Fase 5** | Clientes de Juego (Tauri TS Canvas 2D & Python Bot/CLI) | ⏳ **Siguiente** | 0% |
-| **Fase 6** | Despliegue en Nube, Pruebas de Carga y Evaluación Final | ⏳ **Pendiente** | 0% |
+| **Fase 5** | Clientes de Juego (Tauri TS Canvas 2D & Python Bot/CLI) | ✅ **Completada** | 100% |
+| **Fase 6** | Despliegue en Nube, Pruebas de Carga y Evaluación Final | ⏳ **Siguiente** | 0% |
 
 ---
 
@@ -55,79 +55,124 @@
 
 ---
 
-### ⏳ Fase 2: Infraestructura y Base de Datos (Siguiente)
-- [ ] Creación de `deployments/docker-compose.yml` (PostgreSQL 16, pgAdmin opcional, redes aisladas).
-- [ ] Creación de scripts DDL `deployments/postgres/schema.sql` (tablas: `users`, `rooms`, `matches`, `eco_metrics`).
-- [ ] Estructura de tablas y mutex para asignación de salas stateless entre múltiples Gateways Go *(agregado por Victor)*.
-- [ ] Configuración de variables de entorno (`.env.example`).
+### ✅ Fase 2: Infraestructura y Base de Datos (Completada)
+- [x] ~~**Creación de `deployments/docker-compose.yml`:**~~ PostgreSQL 16 Alpine, PgAdmin en puerto 5050, Go Gateway y Rust Engine interconectados en red bridge `ecostream-net`.
+- [x] ~~**Creación de scripts DDL `deployments/postgres/schema.sql`:**~~ Tablas `users`, `rooms`, `room_players`, `matches`, `match_player_stats`, `audit_logs`, índices B-Tree/GIN y datos semilla.
+- [x] ~~**Estructura stateless y tickets para múltiples Gateways Go:**~~ Control de salas sincronizado vía base de datos con locks optimistas.
+- [x] ~~**Centralización de variables de entorno:**~~ (`.env.example`).
 
 ---
 
-### ⏳ Fase 3: Gateway y Orquestador en Go (Pendiente)
-- [ ] Inicialización de módulo `gateway-go` (`go.mod`).
-- [ ] Servidor HTTP/REST y gRPC en Go con enrutamiento de Auth y Matchmaking.
-- [ ] Implementación de Circuit Breaker (`sony/gobreaker`) hacia PostgreSQL y Rust.
-- [ ] Endpoints de salud estándar (`/healthz`, `/readyz` y `grpc.health.v1.Health`).
-- [ ] Integración de Swagger UI incrustado (`/swagger/`).
-- [ ] Worker pools con Goroutines para auditoría y logging asíncrono.
+### ✅ Fase 3: Gateway y Orquestador en Go (Completada)
+- [x] ~~**Inicialización de módulo `gateway-go` (`go.mod` con Go 1.22+):**~~ Enrutamiento REST HTTP (`:8080`) y servidor gRPC (`:50051`).
+- [x] ~~**Implementación de Circuit Breakers (`sony/gobreaker`):**~~ `PostgreSQL-Breaker` y `Rust-Engine-Breaker` para aislamiento de fallos en cascada.
+- [x] ~~**Autenticación JWT y Hash seguro con Bcrypt:**~~ Generación de tokens y endpoints `/api/v1/auth/register`, `/api/v1/auth/login`.
+- [x] ~~**Matchmaking y gestión de salas sin estado:**~~ Endpoints `/api/v1/rooms/create`, `/api/v1/rooms/join`, `/api/v1/rooms/list`.
+- [x] ~~**Health Probes estándar Cloud-Native:**~~ `/healthz` (liveness) y `/readyz` (readiness con verificación de DB).
+- [x] ~~**Documentación interactiva Swagger UI:**~~ Servida directamente en `http://localhost:8080/swagger/`.
+- [x] ~~**Worker Pools con Goroutines:**~~ 5 workers concurrentes procesando eventos de auditoría mediante canales Go.
+- [x] ~~**Dockerfile multi-etapa en Go:**~~ Imagen optimizada en Alpine Linux.
 
 ---
 
-### ⏳ Fase 4: Motor de Simulación en Rust (Pendiente)
-- [ ] Inicialización de proyecto Cargo `engine-rust` (`Cargo.toml` con Tokio, Tonic, Prost).
-- [ ] Bucle autoritativo de juego a 20 Ticks/segundo (50ms por tick).
-- [ ] Lógica física de fluidos: drenaje de embalse, fugas aleatorias, conmutación de compuertas y purificación biológica.
-- [ ] Buffer de reconciliación de estados y validación de `reconnect_ticket` *(agregado por Victor)*.
-- [ ] Servidor de métricas de latencia RTT (Eco Ping-Pong).
+### ✅ Fase 4: Motor de Simulación en Rust (Completada)
+- [x] ~~**Inicialización de proyecto Cargo `engine-rust`:**~~ Tokio asíncrono, Tonic gRPC, Prost y compilación automatizada de protos en `build.rs`.
+- [x] ~~**Bucle autoritativo de juego a 20 Ticks/segundo (50ms por tick):**~~ Simulación de balance hídrico (`WorldState`), generación procedimental de roturas y fugas.
+- [x] ~~**Mecánicas 3R autoritativas:**~~
+  - **1. Reducir:** Detección de fugas, progreso acumulativo de soldadura y recuperación de caudal.
+  - **2. Reusar:** Conmutación de compuertas hacia huertos comunitarios con contabilización de litros reusados.
+  - **3. Reciclar:** Filtros de carbón activo y desinfección UV en planta biológica con aumento de pureza hídrica.
+- [x] ~~**Buffer de reconciliación y tickets de reconexión:**~~ Margen de gracia de 5s y snapshot inmediato ante microcortes.
+- [x] ~~**Telemetría de Latencia RTT (Ping-Pong 20Hz):**~~ Medición de latencia en tiempo real (1-2 ms en local).
+- [x] ~~**Dockerfile multi-etapa en Rust:**~~ Compilación nativa estática optimizada para producción.
 
 ---
 
-### ⏳ Fase 5: Clientes Multiplataforma (Pendiente)
-- [ ] **Cliente Tauri (TypeScript + Vite):**
-  - Configuración del proyecto y vista gráfica en Canvas 2D Top-Down.
-  - Conexión directa gRPC HTTP/2 nativa sin proxy *(agregado por Victor)*.
-  - HUD con widget de latencia RTT (verde/amarillo/rojo) y telemetría de embalse/pureza.
-- [ ] **Cliente Python (Pygame + gRPC):**
-  - Interfaz gráfica/consola interactiva con teclado.
-  - Modo `--bot` inteligente autónomo para pruebas de carga y evaluación de la cátedra.
+### ✅ Fase 5: Clientes Multiplataforma (Completada)
+- [x] ~~**Cliente Python (Pygame-CE + gRPC Bidireccional):**~~ (`client-python/main_game.py`)
+  - Renderizado gráfico top-down de zonas 3R (Embalse animado, Tuberías de reducción, Huerto de reuso, Planta de filtrado).
+  - Modo Jugador Humano interactivo con controles de teclado (WASD, Espacio, R, F).
+  - Modo `--bot` autónomo con IA reactiva a fugas para pruebas de carga y estrés.
+  - Widget de latencia RTT dinámico en vivo (Verde < 60ms, Amarillo < 150ms, Rojo > 150ms).
+- [x] ~~**Cliente Web / Tauri (TypeScript + Vite + Canvas 2D):**~~ (`client-tauri/`)
+  - Interfaz moderna con tema AquaGuardians (Glassmorphism, Google Fonts Outfit, paleta de colores ecológica).
+  - Canvas 2D reactivo a 60 FPS con animación de ondas, partículas de fugas y renderizado de entidades.
+  - Panel HUD superior con medidores de pureza, nivel de embalse y puntaje en vivo.
+  - Botones de acción táctiles/clic y atajos de teclado para las mecánicas 3R.
 
 ---
 
-## 📁 Estructura de Archivos Producidos Hasta el Momento
+### ⏳ Fase 6: Despliegue en Nube, Pruebas de Carga y Evaluación Final (Siguiente)
+- [ ] Ejecución de escenarios de carga masiva con múltiples bots de Python concurrentes.
+- [ ] Validación de resiliencia desconectando servicios y comprobando Circuit Breakers y reconexión de tickets.
+- [ ] Preparación de la guía de entrega y presentación para la cátedra.
+
+---
+
+## 📁 Estructura de Archivos del Proyecto
 
 ```text
 ecostream-3r/
 ├── .gitignore
-├── README.md                                # Documentación principal y hoja de ruta
+├── .env.example                             # Variables de entorno unificadas
+├── README.md                                # Documentación principal y arquitectura
 ├── REQUERIMIENTOS.md.docx                   # Requerimientos académicos de la cátedra
+├── deployments/
+│   ├── docker-compose.yml                   # Orquestación de Postgres, Gateway, Engine y PgAdmin
+│   └── postgres/
+│       └── schema.sql                       # DDL completo, tablas, índices y datos iniciales
 ├── scripts/
-│   └── build_protos.py                      # Compilador y sincronizador de contratos
+│   └── build_protos.py                      # Compilador y sincronizador de contratos Protobuf
 ├── proto/                                   # Contratos Protocol Buffers v3
-│   ├── buf.yaml                             # Configuración de linting y versionado Buf
-│   ├── buf.gen.yaml                         # Generador de stubs multi-lenguaje
+│   ├── buf.yaml                             # Configuración Buf
+│   ├── buf.gen.yaml                         # Generador de stubs
 │   └── ecostream/
 │       └── v1/
-│           ├── common.proto                 # Tipos compartidos, roles y telemetría RTT
+│           ├── common.proto                 # Tipos base, roles y telemetría RTT
 │           ├── auth.proto                   # Servicio de autenticación JWT
-│           ├── matchmaking.proto            # Servicio de emparejamiento y lobbies
+│           ├── matchmaking.proto            # Servicio de emparejamiento y salas
 │           └── gameplay.proto               # Streaming 20Hz, 3R, reconexión y chat
-├── client-python/
-│   └── proto/                               # Stubs Python generados automáticamente
-│       └── ecostream/v1/
-│           ├── auth_pb2.py / auth_pb2_grpc.py
-│           ├── common_pb2.py / common_pb2_grpc.py
-│           ├── gameplay_pb2.py / gameplay_pb2_grpc.py
-│           └── matchmaking_pb2.py / matchmaking_pb2_grpc.py
-├── engine-rust/
-│   └── proto/                               # Protos sincronizados para Tonic/Prost
-│       └── ecostream/v1/*.proto
+├── gateway-go/                              # Control Plane & Orquestador en Go
+│   ├── Dockerfile                           # Contenedor Alpine multi-stage
+│   ├── go.mod / go.sum
+│   ├── main.go                              # Entrypoint HTTP :8080 y gRPC :50051
+│   └── internal/
+│       ├── auth/                            # Handlers de registro y login con JWT
+│       ├── circuitbreaker/                  # Protecciones PostgreSQL y Rust Engine
+│       ├── config/                          # Carga de variables de entorno
+│       ├── database/                        # Pool de conexiones pgx y health checks
+│       ├── health/                          # Endpoints /healthz y /readyz
+│       ├── matchmaking/                     # Creación y unión de salas
+│       ├── swagger/                         # Swagger UI embebido
+│       └── workers/                         # Worker pool de auditoría asíncrona
+├── engine-rust/                             # Data Plane & Simulación en Rust
+│   ├── Dockerfile                           # Contenedor Rust Alpine multi-stage
+│   ├── Cargo.toml / build.rs
+│   ├── proto/                               # Protos sincronizados
+│   └── src/
+│       ├── main.rs                          # Servidor gRPC :50052
+│       ├── proto.rs                         # Inclusión de stubs Prost/Tonic
+│       ├── services/
+│       │   └── game_service.rs              # Streaming bidireccional HTTP/2
+│       └── simulation/
+│           └── world.rs                     # Bucle autoritativo 20Hz y balance 3R
+├── client-python/                           # Cliente Python Pygame & Bot
+│   ├── main_game.py                         # Cliente interactivo + modo --bot
+│   └── proto/                               # Stubs generados
+├── client-tauri/                            # Cliente Web / Desktop (TS + Canvas 2D)
+│   ├── index.html                           # Interfaz HUD y Canvas 2D
+│   ├── package.json / vite.config.ts / tsconfig.json
+│   └── src/
+│       ├── main.ts                          # Lógica del cliente, render y controles
+│       └── style.css                        # Estilos modernos ecológicos
 └── docs/
-    ├── AVANCES_PROYECTO.md                  # Este documento (Bitácora de progreso)
-    ├── ARQUITECTURA_Y_PLANIFICACION.md      # Diseño Zero-SPOF, Goroutines y Patrones Cloud
-    ├── ARQUITECTURA_FLUJOS_Y_UML.md         # Diagramas UML y flujos de secuencia
-    ├── DISENO_DEL_JUEGO.md                  # Mecánicas de las 3R y simulación hídrica
+    ├── AVANCES_PROYECTO.md                  # Bitácora de progreso
+    ├── GUIA_DESPLIEGUE_Y_TESTS.md           # Manual paso a paso de ejecución y pruebas
+    ├── ARQUITECTURA_Y_PLANIFICACION.md      # Diseño Zero-SPOF y patrones Cloud
+    ├── ARQUITECTURA_FLUJOS_Y_UML.md         # Diagramas UML y flujos
+    ├── DISENO_DEL_JUEGO.md                  # Mecánicas 3R y simulación hídrica
     ├── GATEWAYS_REDUNDANTES_Y_COMUNICACION.md # Explicación técnica de VIP/Keepalived
     ├── PROMPTS_DISENO_SPRITES.md            # Guía de arte Pixel Art Top-Down
     └── swagger/
-        └── openapi.json                     # Especificación OpenAPI 3.0 para Swagger UI
+        └── openapi.json                     # Especificación OpenAPI 3.0
 ```
