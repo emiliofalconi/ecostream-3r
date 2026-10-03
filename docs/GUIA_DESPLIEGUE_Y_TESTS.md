@@ -28,17 +28,21 @@ El proyecto cuenta con scripts automatizados en `scripts/` y `client-python/` di
 
 ---
 
-### Paso 2.1: Levantar la Persistencia (PostgreSQL 16 & pgAdmin)
+### Paso 2.1: Levantar Todo el Stack (PostgreSQL 16, Gateway Go y Engine Rust)
 Abre una terminal en la raíz del proyecto y ejecuta:
 ```powershell
-docker compose -f deployments/docker-compose.yml up -d
+docker compose -f deployments/docker-compose.yml up -d --build
 ```
 
-* **PostgreSQL:** Corriendo en `localhost:5432` (Base de datos: `ecostream_db`, Usuario: `ecostream_user`, Pass: `ecostream_secure_pass`).
+* **PostgreSQL 16:** Corriendo en `localhost:5432` (Base de datos: `ecostream_db`, Usuario: `ecostream_user`, Pass: `ecostream_secure_pass`).
+* **Gateway en Go:** Corriendo en `http://localhost:8080` (HTTP REST) y `localhost:50051` (gRPC).
+  * **Swagger UI interactivo:** [http://localhost:8080/swagger/](http://localhost:8080/swagger/)
+  * **Health Liveness:** `http://localhost:8080/healthz`
+  * **Health Readiness:** `http://localhost:8080/readyz`
+* **Motor de Simulación en Rust:** Corriendo en `localhost:50052` (Streaming gRPC a 20 Hz con bucle autoritativo).
 * **pgAdmin 4:** Accesible en [http://localhost:5050](http://localhost:5050)
   * **Email:** `admin@ecostream.ucab.ve`
   * **Password:** `admin123`
-  * **Para conectar el servidor en pgAdmin:** Host: `postgres`, Puerto: `5432`, DB: `ecostream_db`, User: `ecostream_user`.
 
 ---
 

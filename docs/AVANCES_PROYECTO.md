@@ -15,8 +15,8 @@
 | **Fase 1** | Contratos de Comunicación (gRPC / Protocol Buffers & OpenAPI) | ✅ **Completada** | 100% |
 | **Fase 2** | Infraestructura y Base de Datos (Docker & PostgreSQL 16) | ✅ **Completada** | 100% |
 | **Fase 3** | Control Plane & Gateway Orquestador (Go 1.22+) | ✅ **Completada** | 100% |
-| **Fase 4** | Motor de Simulación Autoritativa a 20 Hz (Rust Tokio/Tonic) | ⏳ **Siguiente** | 0% |
-| **Fase 5** | Clientes de Juego (Tauri TS Canvas 2D & Python Bot/CLI) | ⏳ **Pendiente** | 0% |
+| **Fase 4** | Motor de Simulación Autoritativa a 20 Hz (Rust Tokio/Tonic) | ✅ **Completada** | 100% |
+| **Fase 5** | Clientes de Juego (Tauri TS Canvas 2D & Python Bot/CLI) | ⏳ **Siguiente** | 0% |
 | **Fase 6** | Despliegue en Nube, Pruebas de Carga y Evaluación Final | ⏳ **Pendiente** | 0% |
 
 ---

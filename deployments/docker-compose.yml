@@ -57,6 +57,23 @@ services:
       - ecostream-net
 
   # ----------------------------------------------------------------------------
+  # Data Plane & Simulación en Tiempo Real (Rust Tokio / Tonic 20Hz)
+  # ----------------------------------------------------------------------------
+  engine:
+    build:
+      context: ../engine-rust
+      dockerfile: Dockerfile
+    container_name: ecostream-engine-rust
+    restart: unless-stopped
+    environment:
+      SIMULATION_GRPC_PORT: 50052
+      TICK_RATE_HZ: 20
+    ports:
+      - "50052:50052"
+    networks:
+      - ecostream-net
+
+  # ----------------------------------------------------------------------------
   # Administrador Visual de Base de Datos: pgAdmin 4 (Opcional para inspección)
   # ----------------------------------------------------------------------------
   pgadmin:

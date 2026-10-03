@@ -94,10 +94,12 @@ Para consultar la planificación técnica exhaustiva y el estado de avance, visi
   - [x] Worker pools con Goroutines y servidores de salud HTTP/gRPC (`/healthz`, `/readyz`).
   - [x] Circuit Breakers (`sony/gobreaker`) hacia PostgreSQL y motor Rust.
   - [x] Swagger UI incrustado interactivo (`http://localhost:8080/swagger/`).
-- [ ] **Fase 4: Motor de Simulación en Tiempo Real (Rust)**
-  - [ ] Servidor Tonic gRPC con streaming bidireccional a 20 Hz.
-  - [ ] Lógica autoritativa de balance hídrico, cálculo de RTT y validación de colisiones.
-  - [ ] Buffer de reconciliación y tickets de reconexión rápida (< 3s) (agregado por Victor).
+- [x] **Fase 4: Motor de Simulación en Tiempo Real (Rust)**
+  - [x] Servidor Tonic gRPC con streaming bidireccional a 20 Hz (`engine-rust:50052`).
+  - [x] Lógica autoritativa de balance hídrico (reserva comunal, roturas dinámicas, pureza).
+  - [x] Acciones 3R (1. Reducir fugas, 2. Reusar aguas grises, 3. Reciclar en planta biológica).
+  - [x] Buffer de reconciliación y tickets de reconexión rápida (`reconnect_ticket`) (agregado por Victor).
+  - [x] Telemetría de latencia RTT Ping-Pong en vivo.
 - [ ] **Fase 5: Clientes Multiplataforma (Tauri y Python)**
   - [ ] Cliente interactivo Tauri + Vite + TypeScript con Canvas 2D y gRPC nativo (agregado por Victor).
   - [ ] Cliente interactivo Pygame en Python con soporte de flag `--bot` para stress testing.
