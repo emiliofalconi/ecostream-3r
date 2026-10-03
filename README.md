@@ -59,7 +59,8 @@ Se ha elaborado una guía completa con **prompts optimizados para modelos de gen
 
 ## 📚 Documentación Técnica Detallada
 
-Para consultar la planificación técnica exhaustiva, visita el directorio `docs/`:
+Para consultar la planificación técnica exhaustiva y el estado de avance, visita el directorio `docs/`:
+- [docs/AVANCES_PROYECTO.md](docs/AVANCES_PROYECTO.md): 📊 **Bitácora de avances, tablero de tareas completadas y seguimiento del plan.**
 - [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, tolerancia a fallos Zero-SPOF, concurrencia en Go con Goroutines, seguridad mTLS/JWT y despliegue (LAN vs Nube).
 - [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Documento de diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
 - [docs/ARQUITECTURA_FLUJOS_Y_UML.md](docs/ARQUITECTURA_FLUJOS_Y_UML.md): Especificación detallada de flujos, balanceo de carga, detección de fallos y guía exhaustiva de diagramas UML.
@@ -73,20 +74,28 @@ Para consultar la planificación técnica exhaustiva, visita el directorio `docs
   - [x] Selección e integración de tecnologías (Postgres, Go, Rust, TypeScript/Tauri, Python).
   - [x] Estrategia de tolerancia a fallos y eliminación de SPOF en el Gateway.
   - [x] Justificación técnica de Goroutines y selección de los 5 patrones cloud-native.
+  - [x] Especificación de estrategia de gRPC nativo HTTP/2 en Tauri (agregado por Victor).
+  - [x] Definición de protocolo de reconexión transitoria ante microcortes de red (agregado por Victor).
   - [ ] Generación y consolidación de assets y tileset Pixel Art 2D.
-- [ ] **Fase 1: Contratos de Comunicación (Protocol Buffers)**
-  - [ ] Creación de `proto/v1/auth.proto`, `matchmaking.proto` y `gameplay.proto`.
-  - [ ] Generación automática de stubs para Go, Rust, TS y Python.
-  - [ ] Generación de especificación Swagger/OpenAPI v3 (`protoc-gen-openapiv2`).
-- [ ] **Fase 2: Infraestructura y Base de Datos**
-  - [ ] `docker-compose.yml` con PostgreSQL 16 y scripts DDL (`schema.sql`).
+- [x] **Fase 1: Contratos de Comunicación (Protocol Buffers)**
+  - [x] Creación de `proto/ecostream/v1/common.proto`, `auth.proto`, `matchmaking.proto` y `gameplay.proto`.
+  - [x] Automatización de toolchain Protobuf con `buf` o script unificado multi-lenguaje (Go, Rust, TS, Python) (agregado por Victor).
+  - [x] Generación automática de stubs para Go, Rust, TS y Python.
+  - [x] Generación de especificación Swagger/OpenAPI v3 (`docs/swagger/openapi.json`).
+- [x] **Fase 2: Infraestructura y Base de Datos**
+  - [x] `deployments/docker-compose.yml` con PostgreSQL 16 y pgAdmin 4.
+  - [x] Script DDL `deployments/postgres/schema.sql` (tablas: `users`, `rooms`, `matches`, `audit_logs`).
+  - [x] Estructura de tablas para asignación stateless de salas y workers (agregado por Victor).
+  - [x] Configuración de variables de entorno `.env.example`.
 - [ ] **Fase 3: Implementación del Gateway y Orquestador (Go)**
   - [ ] Endpoints de autenticación, matchmaking y registro en Postgres.
+  - [ ] Coordinación de salas stateless sobre Postgres/Redis para cluster redundante (agregado por Victor).
   - [ ] Worker pools con Goroutines y servidores de salud HTTP/gRPC.
   - [ ] Swagger UI incrustado.
 - [ ] **Fase 4: Motor de Simulación en Tiempo Real (Rust)**
   - [ ] Servidor Tonic gRPC con streaming bidireccional a 20 Hz.
   - [ ] Lógica autoritativa de balance hídrico, cálculo de RTT y validación de colisiones.
+  - [ ] Buffer de reconciliación y tickets de reconexión rápida (< 3s) (agregado por Victor).
 - [ ] **Fase 5: Clientes Multiplataforma (Tauri y Python)**
-  - [ ] Cliente interactivo Tauri + Vite + TypeScript con Canvas 2D.
+  - [ ] Cliente interactivo Tauri + Vite + TypeScript con Canvas 2D y gRPC nativo (agregado por Victor).
   - [ ] Cliente interactivo Pygame en Python con soporte de flag `--bot` para stress testing.

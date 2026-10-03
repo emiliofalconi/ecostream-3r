@@ -1,0 +1,131 @@
+syntax = "proto3";
+
+package ecostream.v1;
+
+option go_package = "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1;ecostreamv1";
+
+import "ecostream/v1/common.proto";
+
+// Servicio de Matchmaking y Coordinación de Lobbies
+service MatchmakingService {
+  rpc CreateRoom(CreateRoomRequest) returns (CreateRoomResponse);
+  rpc JoinRoom(JoinRoomRequest) returns (JoinRoomResponse);
+  rpc QuickMatch(QuickMatchRequest) returns (QuickMatchResponse);
+  rpc LeaveRoom(LeaveRoomRequest) returns (LeaveRoomResponse);
+  rpc GetRoomStatus(GetRoomStatusRequest) returns (GetRoomStatusResponse);
+  rpc StartMatch(StartMatchRequest) returns (StartMatchResponse);
+  rpc ListAvailableRooms(ListAvailableRoomsRequest) returns (ListAvailableRoomsResponse);
+}
+
+enum RoomStatus {
+  ROOM_STATUS_UNSPECIFIED = 0;
+  ROOM_STATUS_WAITING = 1;     // Esperando jugadores en el lobby
+  ROOM_STATUS_STARTING = 2;    // Conteo regresivo iniciado
+  ROOM_STATUS_IN_PROGRESS = 3; // Partida activa en el servidor Rust
+  ROOM_STATUS_FINISHED = 4;    // Partida terminada
+}
+
+message PlayerSlot {
+  string user_id = 1;
+  string username = 2;
+  PlayerRole selected_role = 3;
+  bool is_host = 4;
+  bool is_ready = 5;
+  bool is_bot = 6;
+}
+
+message RoomInfo {
+  string room_id = 1;
+  string room_code = 2;        // Código amigable (ej. AGUA42)
+  string room_name = 3;
+  RoomStatus status = 4;
+  uint32 max_players = 5;
+  repeated PlayerSlot players = 6;
+  string simulation_endpoint = 7; // Endpoint directo gRPC al worker de Rust
+  int64 created_at_unix = 8;
+  uint32 difficulty_level = 9;
+}
+
+message CreateRoomRequest {
+  string token = 1;
+  string room_name = 2;
+  PlayerRole selected_role = 3;
+  uint32 max_players = 4;      // Por defecto 4
+  uint32 difficulty_level = 5;
+}
+
+message CreateRoomResponse {
+  bool success = 1;
+  string message = 2;
+  RoomInfo room = 3;
+  string room_ticket = 4;      // Ticket de acceso directo al worker de Rust
+}
+
+message JoinRoomRequest {
+  string token = 1;
+  string room_code = 2;
+  PlayerRole selected_role = 3;
+}
+
+message JoinRoomResponse {
+  bool success = 1;
+  string message = 2;
+  RoomInfo room = 3;
+  string room_ticket = 4;
+}
+
+message QuickMatchRequest {
+  string token = 1;
+  PlayerRole preferred_role = 2;
+}
+
+message QuickMatchResponse {
+  bool success = 1;
+  string message = 2;
+  RoomInfo room = 3;
+  string room_ticket = 4;
+}
+
+message LeaveRoomRequest {
+  string token = 1;
+  string room_id = 2;
+}
+
+message LeaveRoomResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message GetRoomStatusRequest {
+  string token = 1;
+  string room_id = 2;
+}
+
+message GetRoomStatusResponse {
+  bool success = 1;
+  string message = 2;
+  RoomInfo room = 3;
+}
+
+message StartMatchRequest {
+  string token = 1;
+  string room_id = 2;
+  bool fill_with_bots = 3;     // Si falta cupo, rellena con bots
+}
+
+message StartMatchResponse {
+  bool success = 1;
+  string message = 2;
+  RoomInfo room = 3;
+  string room_ticket = 4;
+}
+
+message ListAvailableRoomsRequest {
+  string token = 1;
+  uint32 page_size = 2;
+}
+
+message ListAvailableRoomsResponse {
+  bool success = 1;
+  repeated RoomInfo rooms = 2;
+}

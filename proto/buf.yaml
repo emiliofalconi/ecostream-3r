@@ -1,0 +1,8 @@
+version: v1
+name: buf.build/makmadon/ecostream-3r
+lint:
+  use:
+    - DEFAULT
+breaking:
+  use:
+    - FILE

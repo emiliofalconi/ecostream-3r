@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package ecostream.v1;
+
+option go_package = "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1;ecostreamv1";
+
+// Roles especializados en la cuadrilla hídrica
+enum PlayerRole {
+  ROLE_UNSPECIFIED = 0;
+  ROLE_PLUMBER = 1;              // Especialista en Reducir: velocidad en reparar fugas
+  ROLE_HYDRAULIC_ENGINEER = 2;   // Especialista en Reusar: conmutación de compuertas y aguas grises
+  ROLE_CHEMICAL_OPERATOR = 3;    // Especialista en Reciclar: gestión de reactivos y filtros
+  ROLE_GENERALIST = 4;           // Rol multipropósito balanceado
+}
+
+// Coordenadas 2D para el mapa Pixel Art Top-Down
+message Vector2D {
+  float x = 1;
+  float y = 2;
+}
+
+// Telemetría hídrica y ecológica en tiempo real
+message WaterMetrics {
+  float reservoir_level_pct = 1;    // Nivel del embalse comunal (0.0 a 100.0%)
+  float water_purity_pct = 2;       // Pureza del agua (0.0 a 100.0%)
+  float total_liters_saved = 3;     // Litros de agua limpia ahorrados por reparaciones
+  float total_liters_reused = 4;    // Litros de aguas grises recirculados hacia cultivos
+  float total_liters_recycled = 5;  // Litros de aguas residuales descontaminados
+}
+
+// Mensajes de telemetría de latencia Ping-Pong (RTT Display)
+message PingMessage {
+  uint64 client_timestamp_ms = 1;   // Epoch Unix ms enviado por el cliente
+  uint32 sequence_id = 2;
+}
+
+message PongMessage {
+  uint64 echo_client_timestamp_ms = 1; // Mismo timestamp reenviado sin alterar
+  uint64 server_tick = 2;              // Tick del servidor autoritativo
+  uint64 server_timestamp_ms = 3;      // Marca de tiempo del servidor
+}

@@ -1,0 +1,21 @@
+version: v1
+plugins:
+  # Generación Go
+  - plugin: go
+    out: ../gateway-go/proto/v1
+    opt:
+      - paths=source_relative
+  - plugin: go-grpc
+    out: ../gateway-go/proto/v1
+    opt:
+      - paths=source_relative
+  # Generación Python
+  - plugin: python
+    out: ../client-python/proto
+  - plugin: pyi
+    out: ../client-python/proto
+  # Generación TypeScript
+  - plugin: es
+    out: ../client-tauri/src/proto
+    opt:
+      - target=ts

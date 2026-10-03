@@ -1,0 +1,256 @@
+syntax = "proto3";
+
+package ecostream.v1;
+
+option go_package = "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1;ecostreamv1";
+
+import "ecostream/v1/common.proto";
+
+// Servicio de Simulación y Loop de Juego Autoritativo en Rust (20 Hz)
+service GameSimulationService {
+  // Stream bidireccional continuo de baja latencia a 20 Ticks/seg
+  rpc StreamGame(stream ClientStreamMessage) returns (stream ServerStreamMessage);
+
+  // Protocolo de Reconexión Transitoria ante microcortes con ticket de gracia (< 5s)
+  rpc ReconnectSession(ReconnectRequest) returns (ReconnectResponse);
+
+  // Envío y recepción de mensajes de chat en tiempo real
+  rpc SendChatMessage(ChatMessage) returns (ChatAcknowledge);
+  rpc StreamChat(StreamChatRequest) returns (stream ChatMessage);
+}
+
+// -------------------------------------------------------------
+// MENSAJES DEL CLIENTE HACIA EL SERVIDOR RUST
+// -------------------------------------------------------------
+
+message ClientStreamMessage {
+  string room_id = 1;
+  string player_id = 2;
+  uint64 client_tick = 3;
+
+  oneof payload {
+    PlayerAction action = 4;
+    PingMessage ping = 5;
+    HeartbeatMessage heartbeat = 6;
+  }
+}
+
+message HeartbeatMessage {
+  int64 timestamp_unix_ms = 1;
+}
+
+message PlayerAction {
+  uint64 action_id = 1;
+
+  oneof action_type {
+    MoveAction move = 2;
+    RepairPipeAction repair_pipe = 3;       // 1. REDUCIR (Reparación de fugas)
+    DivertValveAction divert_valve = 4;     // 2. REUSAR (Desvío aguas grises)
+    OperateRecycleAction operate_recycle = 5;// 3. RECICLAR (Planta purificación)
+    InteractObjectAction interact = 6;
+  }
+}
+
+message MoveAction {
+  Vector2D target_position = 1;
+  Vector2D velocity = 2;
+}
+
+// 1. REDUCIR: Reparación de roturas de tuberías y fugas
+message RepairPipeAction {
+  uint32 pipe_id = 1;
+  float repair_progress_delta = 2;
+}
+
+// 2. REUSAR: Conmutación de válvulas y compuertas de aguas grises hacia riego/huertos
+message DivertValveAction {
+  uint32 valve_id = 1;
+  WaterDestination destination = 2;
+}
+
+enum WaterDestination {
+  DESTINATION_UNSPECIFIED = 0;
+  DESTINATION_SEWER = 1;            // Drenaje/Cloaca (derroche)
+  DESTINATION_IRRIGATION = 2;       // Huertos y parcelas agrícolas comunitarias (Reuso)
+  DESTINATION_RECYCLE_PLANT = 3;    // Planta de tratamiento biológico (Reciclaje)
+}
+
+// 3. RECICLAR: Carga de reactivos/carbón activo y activación de bombas de filtrado
+message OperateRecycleAction {
+  uint32 plant_id = 1;
+  enum RecycleOp {
+    RECYCLE_OP_LOAD_FILTER = 0;     // Cargar material filtrante
+    RECYCLE_OP_FLUSH_SLUDGE = 1;    // Limpiar lodos acumulados
+    RECYCLE_OP_BOOST_PUMP = 2;      // Activar bomba de filtración
+  }
+  RecycleOp operation = 2;
+}
+
+message InteractObjectAction {
+  uint32 object_id = 1;
+  string interaction_type = 2;
+}
+
+// -------------------------------------------------------------
+// MENSAJES DEL SERVIDOR RUST HACIA EL CLIENTE (20 Ticks/seg)
+// -------------------------------------------------------------
+
+message ServerStreamMessage {
+  uint64 server_tick = 1;
+  int64 server_timestamp_unix_ms = 2;
+
+  oneof payload {
+    GameWorldState world_state = 3;
+    PongMessage pong = 4;
+    GameWorldSnapshot initial_snapshot = 5;
+    MatchEndEvent match_end = 6;
+    EventNotification alert = 7;
+  }
+}
+
+// Estado del jugador individual dentro del mundo
+message PlayerEntityState {
+  string player_id = 1;
+  string username = 2;
+  PlayerRole role = 3;
+  Vector2D position = 4;
+  Vector2D velocity = 5;
+  bool is_interacting = 6;
+  uint32 current_score = 7;
+  bool is_connected = 8;
+  string carrying_item = 9; // ej: "filter_pack", "wrench"
+}
+
+// Estado de tubería y fugas de agua
+message PipeEntityState {
+  uint32 pipe_id = 1;
+  Vector2D position = 2;
+  bool is_leaking = 3;
+  float leak_rate_liters_sec = 4;
+  float repair_progress_pct = 5; // 0.0% a 100.0% (100% = Reparado)
+  float water_pressure_bar = 6;
+}
+
+// Estado de válvulas de desvío
+message ValveEntityState {
+  uint32 valve_id = 1;
+  Vector2D position = 2;
+  WaterDestination current_destination = 3;
+  float flow_rate_liters_sec = 4;
+}
+
+// Estado de la planta de tratamiento y reciclaje
+message TreatmentPlantEntityState {
+  uint32 plant_id = 1;
+  Vector2D position = 2;
+  float filter_health_pct = 3;       // 100% a 0% (se desgasta con uso)
+  float sludge_level_pct = 4;        // 0% a 100% (a 100% se atasca)
+  float purification_rate_lps = 5;   // Litros/segundo procesados
+  bool is_operating = 6;
+}
+
+// Estado del mundo completo emitido en cada Tick (50ms)
+message GameWorldState {
+  uint64 tick = 1;
+  WaterMetrics water_metrics = 2;
+  uint32 team_score = 3;
+  uint32 remaining_seconds = 4;
+  repeated PlayerEntityState players = 5;
+  repeated PipeEntityState pipes = 6;
+  repeated ValveEntityState valves = 7;
+  repeated TreatmentPlantEntityState plants = 8;
+  repeated ActiveEvent active_events = 9;
+}
+
+// Snapshot completo del estado para carga inicial o reconexión rápida
+message GameWorldSnapshot {
+  uint64 baseline_tick = 1;
+  string room_id = 2;
+  string reconnect_ticket = 3;       // Ticket para reconectar ante microcortes
+  GameWorldState current_state = 4;
+  int64 match_duration_seconds = 5;
+}
+
+// Eventos climáticos y ambientales dinámicos
+message ActiveEvent {
+  uint32 event_id = 1;
+  enum EventType {
+    EVENT_TYPE_UNSPECIFIED = 0;
+    EVENT_TYPE_HEATWAVE = 1;         // Ola de calor: aumenta demanda de agua
+    EVENT_TYPE_MAJOR_BURST = 2;      // Rotura masiva de tubería principal
+    EVENT_TYPE_CONTAMINATION = 3;    // Fuga de aguas residuales
+    EVENT_TYPE_RAIN_HARVEST = 4;     // Lluvia torrencial: oportunidad de captación
+  }
+  EventType event_type = 2;
+  string title = 3;
+  string description = 4;
+  uint32 remaining_seconds = 5;
+  float severity_multiplier = 6;
+}
+
+message EventNotification {
+  ActiveEvent event = 1;
+  bool is_started = 2; // true = inició, false = finalizó
+}
+
+message MatchEndEvent {
+  bool is_victory = 1;
+  string reason = 2;               // ej. "¡Embalse preservado!", "Sequía crítica"
+  uint32 final_score = 3;
+  WaterMetrics final_metrics = 4;
+  repeated PlayerScoreBreakdown player_scores = 5;
+}
+
+message PlayerScoreBreakdown {
+  string player_id = 1;
+  string username = 2;
+  PlayerRole role = 3;
+  uint32 repairs_done = 4;
+  float water_saved_liters = 5;
+  float water_recycled_liters = 6;
+  uint32 individual_points = 7;
+}
+
+// -------------------------------------------------------------
+// RECONEXIÓN TRANSITORIA (< 5s Grace Period)
+// -------------------------------------------------------------
+
+message ReconnectRequest {
+  string room_id = 1;
+  string player_id = 2;
+  string reconnect_ticket = 3;
+  uint64 last_received_tick = 4;
+}
+
+message ReconnectResponse {
+  bool success = 1;
+  string message = 2;
+  GameWorldSnapshot snapshot = 3;
+}
+
+// -------------------------------------------------------------
+// CHAT EN TIEMPO REAL
+// -------------------------------------------------------------
+
+message ChatMessage {
+  string message_id = 1;
+  string room_id = 2;
+  string sender_id = 3;
+  string sender_username = 4;
+  PlayerRole sender_role = 5;
+  string content = 6;
+  int64 sent_at_unix_ms = 7;
+  bool is_system_message = 8;
+}
+
+message ChatAcknowledge {
+  bool success = 1;
+  string message_id = 2;
+  int64 timestamp_unix_ms = 3;
+}
+
+message StreamChatRequest {
+  string room_id = 1;
+  string player_id = 2;
+  string token = 3;
+}
