@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
-EcoStream 3R - AquaGuardians: Cliente de Videojuego en Tiempo Real (Pygame + gRPC)
-Soporta:
-1. Modo Jugador Humano (Teclado WASD / Flechas + Espacio para interactuar).
-2. Modo Bot Autónomo (--bot) para pruebas de estrés y evaluación automática.
-3. Telemetría de Latencia RTT Ping-Pong en vivo.
+EcoStream 3R - AquaGuardians: Cliente de Videojuego en Tiempo Real (Pygame-CE + gRPC)
+Edición Gráfica Mejorada:
+- Ondas de agua sinusoidales multi-capa en embalse central.
+- Sistema de partículas para fugas a presión (agua) y reparación (chispas).
+- Notificaciones y textos flotantes de puntaje animadas (+150 PTS).
+- Barra HUD moderna con indicadores de estado, pureza y telemetría RTT.
+- Modo Jugador Humano y Modo Bot Autónomo (--bot).
 """
 
 import sys
 import time
 import math
+import random
 import argparse
 import threading
 from pathlib import Path
@@ -25,26 +28,61 @@ from ecostream.v1 import gameplay_pb2
 from ecostream.v1 import gameplay_pb2_grpc
 
 # Dimensiones de la ventana
-WINDOW_WIDTH = 960
-WINDOW_HEIGHT = 640
+WINDOW_WIDTH = 1024
+WINDOW_HEIGHT = 680
 FPS = 60
 
-# Paleta de Colores Ecológica (Aqua / Eco Pixel Art)
-COLOR_BG = (15, 23, 42)          # Slate oscuro
-COLOR_HUD_BG = (30, 41, 59)      # Panel superior
-COLOR_RESERVOIR = (14, 165, 233)  # Azul agua cristalina
-COLOR_RESERVOIR_BG = (12, 74, 110)
-COLOR_PURITY = (52, 211, 153)    # Verde esmeralda ecológico
-COLOR_PIPE_OK = (100, 116, 139)  # Gris tubería metálica
-COLOR_PIPE_LEAK = (239, 68, 68)  # Rojo fuga activa
-COLOR_VALVE = (245, 158, 11)     # Amarillo compuerta
-COLOR_PLANT = (168, 85, 247)     # Púrpura planta biológica
-COLOR_PLAYER = (59, 130, 246)    # Azul avatar
-COLOR_BOT = (236, 72, 153)       # Rosa avatar bot
-COLOR_TEXT = (241, 245, 249)
-COLOR_PING_GOOD = (34, 197, 94)  # Verde < 60ms
-COLOR_PING_WARN = (234, 179, 8)  # Amarillo < 150ms
-COLOR_PING_BAD = (239, 68, 68)   # Rojo > 150ms
+# Paleta de Colores Cyber-Eco
+COLOR_BG = (10, 14, 26)
+COLOR_PANEL_BG = (15, 23, 42)
+COLOR_PANEL_BORDER = (56, 189, 248)
+COLOR_RESERVOIR = (14, 165, 233)
+COLOR_RESERVOIR_LIGHT = (56, 189, 248)
+COLOR_RESERVOIR_BG = (12, 45, 75)
+COLOR_PURITY = (52, 211, 153)
+COLOR_PIPE_OK = (71, 85, 105)
+COLOR_PIPE_LEAK = (239, 68, 68)
+COLOR_VALVE = (245, 158, 11)
+COLOR_PLANT = (168, 85, 247)
+COLOR_PLAYER = (14, 165, 233)
+COLOR_BOT = (236, 72, 153)
+COLOR_TEXT = (248, 250, 252)
+COLOR_TEXT_MUTED = (148, 163, 184)
+COLOR_PING_GOOD = (34, 197, 94)
+COLOR_PING_WARN = (234, 179, 8)
+COLOR_PING_BAD = (239, 68, 68)
+
+class Particle:
+    def __init__(self, x, y, vx, vy, color, size, life):
+        self.x = x
+        self.y = y
+        self.vx = vx
+        self.vy = vy
+        self.color = color
+        self.size = size
+        self.life = life
+        self.max_life = life
+
+    def update(self):
+        self.x += self.vx
+        self.y += self.vy
+        self.life -= 0.02
+        return self.life > 0
+
+class FloatingText:
+    def __init__(self, text, x, y, color):
+        self.text = text
+        self.x = x
+        self.y = y
+        self.color = color
+        self.alpha = 255
+        self.life = 1.0
+
+    def update(self):
+        self.y -= 1.2
+        self.life -= 0.02
+        self.alpha = max(0, int(255 * self.life))
+        return self.life > 0
 
 class EcoStreamGameClient:
     def __init__(self, host="localhost:50052", room_id="rm_demo_01", player_id="usr_victor", is_bot=False):
@@ -67,8 +105,8 @@ class EcoStreamGameClient:
         self.is_connected = False
 
         # Entidades locales
-        self.player_x = 200.0
-        self.player_y = 300.0
+        self.player_x = 380.0
+        self.player_y = 320.0
         self.pipes = []
         self.valves = []
         self.plants = []
@@ -76,6 +114,10 @@ class EcoStreamGameClient:
         # Cola de acciones hacia Rust
         self.action_queue = []
         self.lock = threading.Lock()
+
+        # Efectos visuales
+        self.particles = []
+        self.floating_texts = []
 
         # Iniciar hilo de comunicación gRPC
         self.grpc_thread = threading.Thread(target=self._run_grpc_stream, daemon=True)
@@ -90,7 +132,6 @@ class EcoStreamGameClient:
                 self.is_connected = True
 
                 def request_generator():
-                    # Mensaje inicial
                     t_now = int(time.time() * 1000)
                     yield gameplay_pb2.ClientStreamMessage(
                         room_id=self.room_id,
@@ -142,73 +183,80 @@ class EcoStreamGameClient:
                     if resp.HasField("pong"):
                         self.rtt_ms = int(time.time() * 1000) - resp.pong.echo_client_timestamp_ms
 
-            except Exception as e:
+            except Exception:
                 self.is_connected = False
-                time.sleep(2.0) # Reintento de reconexión
+                time.sleep(2.0)
 
     def queue_action(self, action):
         with self.lock:
             self.action_queue.append(action)
 
+    def spawn_sparks(self, x, y):
+        for _ in range(16):
+            vx = (random.random() - 0.5) * 6
+            vy = (random.random() - 0.8) * 6
+            c = random.choice([(250, 204, 21), (56, 189, 248), (255, 255, 255)])
+            self.particles.append(Particle(x, y, vx, vy, c, random.randint(2, 4), 1.0))
+
     def bot_ai_tick(self):
         """Lógica de IA del Bot para pruebas automáticas de estrés y 3R"""
-        # 1. Prioridad: Buscar tubería con fuga más cercana (REDUCIR)
         leaking_pipes = [p for p in self.pipes if p.is_leaking]
         if leaking_pipes:
             target = leaking_pipes[0]
-            tx = target.position.x * 15.0 + 100.0
-            ty = target.position.y * 8.0 + 150.0
+            tx = 420.0
+            ty = 180.0 + (target.pipe_id - 1) * 60.0
 
-            # Mover hacia la fuga
             dx = tx - self.player_x
             dy = ty - self.player_y
             dist = math.hypot(dx, dy)
 
-            if dist > 30.0:
-                self.player_x += (dx / dist) * 4.0
-                self.player_y += (dy / dist) * 4.0
+            if dist > 35.0:
+                self.player_x += (dx / dist) * 4.5
+                self.player_y += (dy / dist) * 4.5
             else:
-                # Reparar fuga (1. REDUCIR)
+                self.spawn_sparks(self.player_x, self.player_y)
                 self.queue_action(gameplay_pb2.PlayerAction(
                     action_id=int(time.time()*1000),
-                    repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=target.pipe_id, repair_progress_delta=35.0)
+                    repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=target.pipe_id, repair_progress_delta=40.0)
                 ))
+                self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
             return
 
-        # 2. Reusar o Reciclar si no hay fugas
-        if self.tick % 40 == 0 and self.valves:
+        # Reusar o Reciclar
+        if self.tick % 45 == 0 and self.valves:
             self.queue_action(gameplay_pb2.PlayerAction(
                 action_id=int(time.time()*1000),
                 divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
             ))
-        elif self.tick % 60 == 0 and self.plants:
+            self.floating_texts.append(FloatingText("+60 PTS (Aguas Reusadas 🌱)", self.player_x - 30, self.player_y - 20, (52, 211, 153)))
+        elif self.tick % 65 == 0 and self.plants:
             self.queue_action(gameplay_pb2.PlayerAction(
                 action_id=int(time.time()*1000),
                 operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
             ))
+            self.floating_texts.append(FloatingText("+100 PTS (Filtro Activo ⚗️)", self.player_x - 30, self.player_y - 20, (192, 132, 252)))
 
     def run(self):
         pygame.init()
         pygame.font.init()
         screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
-        mode_title = "MODO BOT AUTOMATICO (Stress Testing)" if self.is_bot else "MODO JUGADOR INTERACTIVO"
+        mode_title = "MODO BOT AUTOMÁTICO" if self.is_bot else "MODO JUGADOR AQUAGUARDIAN"
         pygame.display.set_caption(f"EcoStream 3R - AquaGuardians [{mode_title}]")
         clock = pygame.time.Clock()
 
         font_large = pygame.font.SysFont("Segoe UI", 20, bold=True)
-        font_med = pygame.font.SysFont("Segoe UI", 15, bold=True)
+        font_med = pygame.font.SysFont("Segoe UI", 14, bold=True)
         font_small = pygame.font.SysFont("Segoe UI", 12)
+        font_mono = pygame.font.SysFont("Consolas", 13, bold=True)
 
         running = True
-        wave_anim = 0
+        wave_time = 0.0
 
         while running:
             dt = clock.tick(FPS) / 1000.0
-            wave_anim += dt * 3.0
+            wave_time += dt * 3.5
 
-            # -------------------------------------------------------------
-            # 1. EVENTOS Y ENTRADA DE USUARIO
-            # -------------------------------------------------------------
+            # Eventos
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     running = False
@@ -216,115 +264,152 @@ class EcoStreamGameClient:
                     if event.key == pygame.K_ESCAPE:
                         running = False
                     elif not self.is_bot and event.key == pygame.K_SPACE:
-                        # 1. Acción Reparar Fuga más cercana (REDUCIR)
+                        # 1. Reducir
                         if self.pipes:
                             for p in self.pipes:
                                 if p.is_leaking:
+                                    self.spawn_sparks(self.player_x, self.player_y)
                                     self.queue_action(gameplay_pb2.PlayerAction(
                                         action_id=int(time.time()*1000),
                                         repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=p.pipe_id, repair_progress_delta=50.0)
                                     ))
+                                    self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada!)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
                                     break
                     elif not self.is_bot and event.key == pygame.K_r:
-                        # 2. Acción Reusar aguas grises (REUSAR)
+                        # 2. Reusar
                         self.queue_action(gameplay_pb2.PlayerAction(
                             action_id=int(time.time()*1000),
                             divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
                         ))
+                        self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto 🌱)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
                     elif not self.is_bot and event.key == pygame.K_f:
-                        # 3. Acción Reciclar planta biológica (RECICLAR)
+                        # 3. Reciclar
                         self.queue_action(gameplay_pb2.PlayerAction(
                             action_id=int(time.time()*1000),
                             operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
                         ))
+                        self.floating_texts.append(FloatingText("+120 PTS (Filtro Carbón UV ⚗️)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
 
-            # Movimiento continuo con teclas (si no es bot)
+            # Movimiento Jugador / Bot
             if not self.is_bot:
                 keys = pygame.key.get_pressed()
-                speed = 220.0 * dt
-                if keys[pygame.K_w] or keys[pygame.K_UP]:
-                    self.player_y = max(120, self.player_y - speed)
-                if keys[pygame.K_s] or keys[pygame.K_DOWN]:
-                    self.player_y = min(WINDOW_HEIGHT - 40, self.player_y + speed)
-                if keys[pygame.K_a] or keys[pygame.K_LEFT]:
-                    self.player_x = max(40, self.player_x - speed)
-                if keys[pygame.K_d] or keys[pygame.K_RIGHT]:
-                    self.player_x = min(WINDOW_WIDTH - 40, self.player_x + speed)
+                speed = 240.0 * dt
+                if keys[pygame.K_w] or keys[pygame.K_UP]: self.player_y = max(110, self.player_y - speed)
+                if keys[pygame.K_s] or keys[pygame.K_DOWN]: self.player_y = min(WINDOW_HEIGHT - 35, self.player_y + speed)
+                if keys[pygame.K_a] or keys[pygame.K_LEFT]: self.player_x = max(35, self.player_x - speed)
+                if keys[pygame.K_d] or keys[pygame.K_RIGHT]: self.player_x = min(WINDOW_WIDTH - 35, self.player_x + speed)
             else:
                 self.bot_ai_tick()
 
+            # Partículas de fugas
+            for p in self.pipes:
+                if p.is_leaking and random.random() < 0.4:
+                    px = 440.0
+                    py = 180.0 + (p.pipe_id - 1) * 60.0
+                    self.particles.append(Particle(
+                        px + (random.random() - 0.5) * 20,
+                        py,
+                        (random.random() - 0.5) * 3,
+                        -random.random() * 4 - 1,
+                        (56, 189, 248),
+                        random.randint(2, 4),
+                        0.8
+                    ))
+
             # -------------------------------------------------------------
-            # 2. RENDERIZADO GRÁFICO (Top-Down Pixel Art Style)
+            # RENDERIZADO
             # -------------------------------------------------------------
             screen.fill(COLOR_BG)
 
-            # A. ZONA DEL EMBALSE PRINCIPAL (Izquierda)
-            res_rect = pygame.Rect(40, 130, 240, 460)
-            pygame.draw.rect(screen, COLOR_RESERVOIR_BG, res_rect, border_radius=12)
-            water_height = int(460 * (self.reservoir_pct / 100.0))
-            water_rect = pygame.Rect(40, 130 + (460 - water_height), 240, water_height)
-            pygame.draw.rect(screen, COLOR_RESERVOIR, water_rect, border_radius=12)
-            pygame.draw.rect(screen, (56, 189, 248), res_rect, 3, border_radius=12)
+            # A. EMBALSE PRINCIPAL
+            res_rect = pygame.Rect(30, 110, 240, 530)
+            pygame.draw.rect(screen, COLOR_RESERVOIR_BG, res_rect, border_radius=14)
+            
+            fill_h = int(500 * (max(2.0, self.reservoir_pct) / 100.0))
+            water_rect = pygame.Rect(30, 110 + (530 - fill_h), 240, fill_h)
+            pygame.draw.rect(screen, COLOR_RESERVOIR, water_rect, border_radius=14)
+            pygame.draw.rect(screen, COLOR_PANEL_BORDER, res_rect, 2, border_radius=14)
 
-            res_label = font_med.render(f"💧 EMBALSE: {self.reservoir_pct:.1f}%", True, COLOR_TEXT)
-            screen.blit(res_label, (55, 140))
+            # Ondas decorativas
+            for ox in range(35, 265, 8):
+                oy = 110 + (530 - fill_h) + int(math.sin(ox * 0.08 + wave_time) * 3.0)
+                pygame.draw.circle(screen, (255, 255, 255), (ox, oy), 2)
 
-            # B. ZONA 1: REDUCIR (Tuberías y Fugas)
-            pygame.draw.rect(screen, (30, 41, 59), (320, 130, 280, 220), border_radius=10)
-            pygame.draw.rect(screen, (71, 85, 105), (320, 130, 280, 220), 2, border_radius=10)
-            screen.blit(font_med.render("1. REDUCIR (Fugas Comunales)", True, (248, 113, 113)), (335, 140))
+            screen.blit(font_med.render(f"💧 EMBALSE: {self.reservoir_pct:.1f}%", True, COLOR_TEXT), (45, 125))
+
+            # B. ZONA 1: REDUCIR
+            z1 = pygame.Rect(300, 110, 290, 250)
+            pygame.draw.rect(screen, (22, 32, 54), z1, border_radius=12)
+            pygame.draw.rect(screen, (71, 85, 105), z1, 2, border_radius=12)
+            screen.blit(font_med.render("🔧 1. REDUCIR (Fugas)", True, (248, 113, 113)), (315, 122))
 
             for i, p in enumerate(self.pipes):
-                py_y = 180 + i * 50
+                py_y = 160 + i * 55
                 p_color = COLOR_PIPE_LEAK if p.is_leaking else COLOR_PIPE_OK
-                pygame.draw.rect(screen, p_color, (340, py_y, 240, 30), border_radius=6)
-                txt = f"Tubería #{p.pipe_id}: {'¡ROTURA/FUGA!' if p.is_leaking else 'Sellada (OK)'}"
-                screen.blit(font_small.render(txt, True, (255, 255, 255)), (350, py_y + 7))
+                pygame.draw.rect(screen, p_color, (315, py_y, 260, 36), border_radius=6)
+                txt = f"Tubería #{p.pipe_id}: {'⚠️ ¡FUGA CRÍTICA!' if p.is_leaking else 'Presión Normal (OK)'}"
+                screen.blit(font_small.render(txt, True, (255, 255, 255)), (325, py_y + 9))
 
-            # C. ZONA 2: REUSAR (Huertos y Desvío de Aguas Grises)
-            pygame.draw.rect(screen, (20, 83, 45), (320, 370, 280, 220), border_radius=10)
-            pygame.draw.rect(screen, (34, 197, 94), (320, 370, 280, 220), 2, border_radius=10)
-            screen.blit(font_med.render("2. REUSAR (Huerto Comunitario)", True, (134, 239, 172)), (335, 380))
-            screen.blit(font_small.render("Válvula Aguas Grises -> Riego Activo 🌱", True, COLOR_TEXT), (335, 410))
-            screen.blit(font_small.render(f"Reuso acumulado: {self.liters_reused:.0f} Litros", True, (200, 250, 200)), (335, 435))
+            # C. ZONA 2: REUSAR
+            z2 = pygame.Rect(300, 380, 290, 260)
+            pygame.draw.rect(screen, (20, 83, 45), z2, border_radius=12)
+            pygame.draw.rect(screen, (34, 197, 94), z2, 2, border_radius=12)
+            screen.blit(font_med.render("🌱 2. REUSAR (Huertos Comunitarios)", True, (134, 239, 172)), (315, 395))
+            screen.blit(font_small.render(f"Reuso acumulado: {self.liters_reused:.0f} L", True, (220, 252, 231)), (315, 425))
+            screen.blit(font_small.render("Válvula de aguas grises canalizada a riego", True, COLOR_TEXT_MUTED), (315, 450))
 
-            # D. ZONA 3: RECICLAR (Planta de Filtrado Biológico)
-            pygame.draw.rect(screen, (88, 28, 135), (630, 130, 290, 460), border_radius=10)
-            pygame.draw.rect(screen, (168, 85, 247), (630, 130, 290, 460), 2, border_radius=10)
-            screen.blit(font_med.render("3. RECICLAR (Planta Filtrado)", True, (216, 180, 254)), (645, 140))
-            screen.blit(font_small.render(f"Pureza Hídrica: {self.purity_pct:.1f}%", True, COLOR_PURITY), (645, 180))
-            screen.blit(font_small.render(f"Descontaminado: {self.liters_recycled:.0f} Litros", True, COLOR_TEXT), (645, 210))
-            screen.blit(font_small.render("Filtro: Carbón Activo & Grava", True, (192, 132, 252)), (645, 240))
+            # D. ZONA 3: RECICLAR
+            z3 = pygame.Rect(615, 110, 380, 530)
+            pygame.draw.rect(screen, (46, 16, 77), z3, border_radius=12)
+            pygame.draw.rect(screen, COLOR_PLANT, z3, 2, border_radius=12)
+            screen.blit(font_med.render("⚗️ 3. RECICLAR (Planta Filtrado UV)", True, (216, 180, 254)), (630, 125))
+            screen.blit(font_med.render(f"Pureza Hídrica: {self.purity_pct:.1f}%", True, COLOR_PURITY), (630, 160))
+            screen.blit(font_small.render(f"Agua Descontaminada: {self.liters_recycled:.0f} L", True, (243, 232, 255)), (630, 190))
 
-            # E. AVATAR DEL JUGADOR / BOT
-            avatar_color = COLOR_BOT if self.is_bot else COLOR_PLAYER
-            pygame.draw.circle(screen, avatar_color, (int(self.player_x), int(self.player_y)), 18)
+            # Filtro rotatorio central
+            center_x, center_y = 800, 380
+            pygame.draw.circle(screen, (168, 85, 247), (center_x, center_y), 50, 3)
+            for a in range(4):
+                ang = wave_time + a * (math.pi / 2.0)
+                fx = center_x + int(math.cos(ang) * 40)
+                fy = center_y + int(math.sin(ang) * 40)
+                pygame.draw.line(screen, (216, 180, 254), (center_x, center_y), (fx, fy), 2)
+
+            # E. PARTÍCULAS
+            self.particles = [p for p in self.particles if p.update()]
+            for p in self.particles:
+                pygame.draw.circle(screen, p.color, (int(p.x), int(p.y)), p.size)
+
+            # F. AVATAR
+            avatar_col = COLOR_BOT if self.is_bot else COLOR_PLAYER
+            pygame.draw.circle(screen, avatar_col, (int(self.player_x), int(self.player_y)), 18)
             pygame.draw.circle(screen, (255, 255, 255), (int(self.player_x), int(self.player_y)), 18, 2)
             lbl = "BOT" if self.is_bot else "TÚ"
             screen.blit(font_small.render(lbl, True, (255, 255, 255)), (int(self.player_x) - 10, int(self.player_y) - 8))
 
-            # F. PANEL HUD SUPERIOR (Telemetría en Vivo & RTT)
-            pygame.draw.rect(screen, COLOR_HUD_BG, (0, 0, WINDOW_WIDTH, 100))
-            pygame.draw.line(screen, (51, 65, 85), (0, 100), (WINDOW_WIDTH, 100), 2)
+            # G. TEXTOS FLOTANTES
+            self.floating_texts = [ft for ft in self.floating_texts if ft.update()]
+            for ft in self.floating_texts:
+                screen.blit(font_med.render(ft.text, True, ft.color), (int(ft.x), int(ft.y)))
 
-            # Título y Sala
-            screen.blit(font_large.render("EcoStream 3R - AquaGuardians", True, (56, 189, 248)), (20, 15))
-            screen.blit(font_small.render(f"Lobby: [{self.room_id}] | Modo: {mode_title}", True, (148, 163, 184)), (20, 45))
-            screen.blit(font_small.render("Controles: [WASD] Mover | [Espacio] 1.Reducir | [R] 2.Reusar | [F] 3.Reciclar", True, (203, 213, 225)), (20, 70))
+            # H. HUD SUPERIOR
+            pygame.draw.rect(screen, COLOR_PANEL_BG, (0, 0, WINDOW_WIDTH, 85))
+            pygame.draw.line(screen, (51, 65, 85), (0, 85), (WINDOW_WIDTH, 85), 2)
 
-            # Score y Ahorro
-            screen.blit(font_med.render(f"PUNTAJE: {self.team_score}", True, (250, 204, 21)), (450, 20))
-            screen.blit(font_small.render(f"Ahorro Fugas: {self.liters_saved:.0f} L", True, (52, 211, 153)), (450, 45))
-            screen.blit(font_small.render(f"Tiempo: {self.remaining_seconds}s | Tick: #{self.tick}", True, (148, 163, 184)), (450, 70))
+            screen.blit(font_large.render("EcoStream 3R", True, (56, 189, 248)), (25, 12))
+            screen.blit(font_small.render(f"Lobby: [{self.room_id}] | {mode_title}", True, COLOR_TEXT_MUTED), (25, 38))
+            screen.blit(font_small.render("Controles: [WASD] Mover | [Espacio] 1.Reducir | [R] 2.Reusar | [F] 3.Reciclar", True, (203, 213, 225)), (25, 58))
 
-            # Widget de Latencia RTT Ping-Pong en vivo (Verde/Amarillo/Rojo)
+            screen.blit(font_large.render(f"PUNTOS: {self.team_score}", True, (250, 204, 21)), (450, 15))
+            screen.blit(font_small.render(f"Ahorro: {self.liters_saved:.0f} L | Tiempo: {self.remaining_seconds}s", True, (52, 211, 153)), (450, 45))
+
+            # Widget Ping
             ping_color = COLOR_PING_GOOD if self.rtt_ms < 60 else (COLOR_PING_WARN if self.rtt_ms < 150 else COLOR_PING_BAD)
-            pygame.draw.rect(screen, (15, 23, 42), (WINDOW_WIDTH - 220, 15, 200, 70), border_radius=8)
-            pygame.draw.rect(screen, ping_color, (WINDOW_WIDTH - 220, 15, 200, 70), 2, border_radius=8)
-
-            screen.blit(font_med.render(f"PING: {self.rtt_ms} ms", True, ping_color), (WINDOW_WIDTH - 205, 25))
-            status_txt = "CONECTADO A RUST 20Hz" if self.is_connected else "RECONECTANDO..."
-            screen.blit(font_small.render(status_txt, True, ping_color), (WINDOW_WIDTH - 205, 52))
+            pygame.draw.rect(screen, (10, 14, 26), (WINDOW_WIDTH - 200, 12, 175, 60), border_radius=8)
+            pygame.draw.rect(screen, ping_color, (WINDOW_WIDTH - 200, 12, 175, 60), 2, border_radius=8)
+            screen.blit(font_mono.render(f"PING: {self.rtt_ms} ms", True, ping_color), (WINDOW_WIDTH - 185, 20))
+            status_txt = "EN VIVO 20Hz" if self.is_connected else "RECONECTANDO"
+            screen.blit(font_small.render(status_txt, True, ping_color), (WINDOW_WIDTH - 185, 44))
 
             pygame.display.flip()
 
