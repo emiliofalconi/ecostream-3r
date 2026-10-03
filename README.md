@@ -63,6 +63,7 @@ Para consultar la planificación técnica exhaustiva, visita el directorio `docs
 - [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, tolerancia a fallos Zero-SPOF, concurrencia en Go con Goroutines, seguridad mTLS/JWT y despliegue (LAN vs Nube).
 - [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Documento de diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
 - [docs/ARQUITECTURA_FLUJOS_Y_UML.md](docs/ARQUITECTURA_FLUJOS_Y_UML.md): Especificación detallada de flujos, balanceo de carga, detección de fallos y guía exhaustiva de diagramas UML.
+- [docs/PLAN_DE_PRUEBAS.md](docs/PLAN_DE_PRUEBAS.md): Plan maestro de pruebas de carga, caos, resiliencia ante fallos, emulación de red y validación anti-cheat.
 
 ---
 
