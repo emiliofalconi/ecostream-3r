@@ -60,6 +60,7 @@ Se ha elaborado una guía completa con **prompts optimizados para modelos de gen
 ## 📚 Documentación Técnica Detallada
 
 Para consultar la planificación técnica exhaustiva y el estado de avance, visita el directorio `docs/`:
+- [docs/GUIA_DESPLIEGUE_Y_TESTS.md](docs/GUIA_DESPLIEGUE_Y_TESTS.md): 🛠️ **Catálogo de scripts, guía de despliegue de pruebas y pasos para continuar.**
 - [docs/AVANCES_PROYECTO.md](docs/AVANCES_PROYECTO.md): 📊 **Bitácora de avances, tablero de tareas completadas y seguimiento del plan.**
 - [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, tolerancia a fallos Zero-SPOF, concurrencia en Go con Goroutines, seguridad mTLS/JWT y despliegue (LAN vs Nube).
 - [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Documento de diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
