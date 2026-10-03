@@ -127,3 +127,16 @@ message GameWorldState {
    - Dos posibles modalidades:
      - **Modo CLI / TUI (Textual/Curses)**: Renderiza el mapa en caracteres ASCII / consola con barras de progreso de embalse, tuberías y estado de jugadores.
      - **Modo Agente / Bot Inteligente**: Corre en background simulando un compañero automático que busca la fuga más cercana y la repara, ideal para pruebas de carga y evaluación de la cátedra sin requerir siempre 4 personas humanas conectadas.
+
+---
+
+## 8. Resiliencia de Sesión y Reconexión Rápida (agregado por Victor)
+
+Para evitar que jugadores pierdan su progreso ante microcortes de red o caídas transitorias de paquetes durante la simulación a 20 Hz:
+
+1. **Ticket de Sesión Efímero (`reconnect_ticket`) (agregado por Victor)**:
+   - Al unirse a la sala, el servidor Rust emite un token de sesión de 64 bits.
+   - Si el stream gRPC se interrumpe, el servidor mantiene la entidad del jugador en la posición actual durante un margen de gracia de **5 segundos**.
+2. **Snapshot de Reconciliación Inmediato (agregado por Victor)**:
+   - Al reconectar con el ticket válido, el cliente no reinicia el juego: recibe un `GameWorldSnapshot` completo del tick actual y continúa el bucle de renderizado fluidamente.
+

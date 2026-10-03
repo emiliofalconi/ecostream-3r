@@ -335,12 +335,27 @@ Para que el jugador vea en pantalla su latencia en vivo (indicador tipo `Ping: 2
        - **Amarillo**: $60 - 150\text{ ms}$ (Aceptable con interpolación).
        - **Rojo**: $> 150\text{ ms}$ (Alerta de pérdida de paquetes o congestión en la nube).
 
+---
 
+## 16. Mejoras y Optimizaciones de Arquitectura (agregado por Victor)
 
+Para asegurar la máxima robustez y agilidad durante el ciclo de desarrollo del sistema distribuido, se incorporan las siguientes optimizaciones de ingeniería:
 
+### 16.1 Gestión y Toolchain Automatizado de Protocol Buffers con `buf` / Makefile (agregado por Victor)
+* **Problema:** En un ecosistema políglota con 4 lenguajes (Go, Rust, TypeScript, Python), la compilación manual de `.proto` con `protoc` genera inconsistencias de versión, rutas de salida desordenadas y fallos de tipado cruzado.
+* **Solución:** Centralizar la compilación de contratos mediante `buf` (o un `Makefile` / script automatizado `scripts/gen_protos.sh`). Con un solo comando, se compilan y validan los stubs tipados para Go (`protoc-gen-go`), Rust (`prost` / `tonic-build`), TypeScript (`ts-proto` / `@bufbuild/protobuf`) y Python (`grpcio-tools`), garantizando total coherencia entre clientes y servidores.
 
+### 16.2 Estrategia de Conectividad gRPC HTTP/2 Nativa en Tauri (agregado por Victor)
+* **Problema:** Las aplicaciones web en navegadores tradicionales no pueden abrir sockets HTTP/2 puros arbitrarios y requieren proxies intermedios (como Envoy para gRPC-Web).
+* **Solución:** Aprovechar la arquitectura de **Tauri**. En lugar de depender de proxies externos en desarrollo, el cliente utiliza el runtime nativo de Tauri (Rust Core IPC o `@grpc/grpc-js` / streaming directo HTTP/2) para conectarse directamente a los puertos gRPC de Go y Rust con latencia mínima y cero intermediarios.
 
+### 16.3 Coordinación de Salas y Estado en PostgreSQL/Redis para Gateways 100% Stateless (agregado por Victor)
+* **Problema:** Si dos instancias de Gateway en Go están activas tras un balanceador o IP flotante (VIP), un jugador puede crear una sala en el Gateway 1 y otro jugador puede intentar unirse a través del Gateway 2.
+* **Solución:** Ningún Gateway almacenará el mapa de salas en su memoria RAM local aislada. La asignación de sala (`RoomID -> RustWorkerEndpoint`) se registra atómicamente en PostgreSQL (o Redis ligero de coordinación) con estados (`WAITING`, `RUNNING`, `FINISHED`). Esto garantiza que cualquier Gateway pueda despachar a los clientes a la sala y worker de Rust correspondiente sin importar por qué réplica ingresaron.
 
-
-
+### 16.4 Protocolo de Reconexión Transitoria y Resiliencia a Microcortes (Tickets de Sesión) (agregado por Victor)
+* **Problema:** En redes Wi-Fi o conexiones con fluctuaciones de señal, una pérdida de socket TCP por 1 o 2 segundos expulsaría al jugador de la partida en el servidor autoritativo de Rust.
+* **Solución:** Se implementa un **`reconnect_ticket` criptográfico** temporal con un tiempo de gracia de 5 segundos (*Grace Period*). Durante este lapso:
+  1. El servidor Rust mantiene al jugador en estado `DISCONNECTED_WAITING`, conservando su entidad y posición en el bucle de simulación.
+  2. Si el cliente reestablece el stream gRPC presentando su ticket, el motor de Rust le envía de inmediato un **Snapshot de Reconciliación** con el estado actual del mundo hídrico y reanuda el envío de ticks sin reiniciar la sesión.
 
