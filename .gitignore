@@ -25,3 +25,6 @@ env/
 # Environment variables
 .env
 .env.local
+
+# Archivos de trabajo de agentes
+.agents/
