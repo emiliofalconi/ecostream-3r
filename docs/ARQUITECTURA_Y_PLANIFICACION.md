@@ -24,12 +24,11 @@ Dependiendo del entorno de despliegue (Nube gestionada o Infraestructura propia/
   - Distribuye el tráfico gRPC directo entrante a las réplicas del Gateway Go.
 
 ### 2.2 En Entorno Universitario / Bare-Metal / Docker Multi-Host
-- **VRRP / IP Flotante (Keepalived / CARP)** o **DNS Round-Robin con Health Checks**:
-  - Dos o más instancias de Gateway comparten una **IP Virtual (VIP)**.
-  - Si el nodo primario falla o deja de responder al heartbeat en menos de 1 segundo, el nodo secundario toma la IP flotante automáticamente vía gratuitous ARP.
+- **Balanceo Basado en DNS (CoreDNS / Headless Services)**:
+  - En lugar de usar una IP Virtual (VIP) que crea un cuello de botella y choca con el balanceo nativo, se configura el DNS para devolver múltiples registros A/AAAA (las IPs de cada instancia del Gateway).
 - **Client-Side Load Balancing (Nativo en gRPC)**:
-  - gRPC posee capacidades nativas de resolución de nombres (`dns:///` o Service Discovery tipo Consul/CoreDNS).
-  - El cliente recibe una lista de endpoints backend vivos. Si un gateway no responde, el canal gRPC del cliente conmuta automáticamente a la siguiente dirección de la lista sin intermediarios ni proxies.
+  - gRPC posee capacidades nativas de resolución de nombres (`dns:///`).
+  - El cliente recibe la lista de endpoints backend vivos. Si un gateway no responde, el canal gRPC del cliente conmuta automáticamente a la siguiente dirección de la lista de forma round-robin, sin intermediarios L4.
 
 ```mermaid
 flowchart TD
@@ -39,7 +38,7 @@ flowchart TD
     end
 
     subgraph EdgeLayer["Capa de Acceso de Alta Disponibilidad"]
-        VIP["Dirección IP Virtual (VIP) / DNS Round-Robin"]
+        DNS["Servidor DNS / Headless Service"]
     end
 
     subgraph GatewayCluster["Cluster de Gateways Stateless (Go)"]
@@ -61,10 +60,10 @@ flowchart TD
         PGStandby[("PostgreSQL Réplica (Hot Standby)")]
     end
 
-    C1 -->|gRPC Directo HTTP/2| VIP
-    C2 -->|gRPC Directo HTTP/2| VIP
-    VIP -->|Conexión Directa| GW1
-    VIP -->|Conexión Directa| GW2
+    C1 -->|Resuelve IPs vía dns:///| DNS
+    C2 -->|Resuelve IPs vía dns:///| DNS
+    DNS -->|Conexión Directa gRPC| GW1
+    DNS -->|Conexión Directa gRPC| GW2
 
     GW1 <-->|Registro y Heartbeat| Consul
     GW2 <-->|Registro y Heartbeat| Consul
@@ -88,10 +87,10 @@ flowchart TD
 
 | Componente que cae | Detección | Mecanismo de Recuperación | Impacto en el Usuario |
 | :--- | :--- | :--- | :--- |
-| **Proxy / Ingress Primario** | Health checks L4/L7 o Keepalived VRRP (< 1s). | La IP Virtual migra al proxy secundario; DNS conmutado. | Reconexión transparente de socket (< 500ms). |
-| **Nodo Go Gateway** | Health check gRPC `/grpc.health.v1.Health/Check`. | El proxy retira la instancia del pool y despacha a las réplicas restantes. | Ninguno (Go es stateless; la sesión está en token/DB). |
-| **Motor de Juego Rust** | Pérdida de heartbeat en Service Registry (timeout > 2s). | El Gateway Go detecta la ausencia, inicializa un nuevo worker Rust y restaura el último checkpoint de la partida. | Pausa breve de 1 a 2 segundos en el tick del juego con sincronización inmediata. |
-| **PostgreSQL Primario** | Patroni / PgBouncer / Keepalived monitor. | Promoción automática de la réplica `Hot Standby` a Primario. | Breve rechazo de escrituras durante la elección (1-3s), lecturas continúan. |
+| **DNS / Headless Service** | DNS Health checks (CoreDNS). | El DNS actualiza los registros A eliminando la instancia caída. | Reconexión de socket de cliente por Client-Side LB. |
+| **Nodo Go Gateway** | Health check gRPC `/grpc.health.v1.Health/Check`. | El cliente gRPC retira la instancia muerta y usa la siguiente IP (Round Robin). | Ninguno (Go es stateless; el cliente cambia de IP sin perder sesión). |
+| **Motor de Juego Rust** | Pérdida de heartbeat (timeout 3s). | Go levanta un nuevo worker; **el cliente solicita a Go la nueva IP de Rust**. | Pausa de 15 a 30 segundos con UI de reconexión. |
+| **PostgreSQL Primario** | Patroni / Keepalived monitor. | Promoción automática a Primario; Go retiene eventos usando Redis Streams (DLQ). | Retardo en confirmaciones; sin pérdida de victorias gracias a DLQ en Redis. |
 
 ---
 
@@ -265,7 +264,7 @@ sequenceDiagram
 
 ### 12.2 ¿Dónde se aplican las Goroutines con propósito tangible?
 1. **Dispatcher Asíncrono de Eventos y Auditoría (`Worker Pool`)**:
-   - Cada vez que una partida finaliza o un jugador sube de nivel, la persistencia en PostgreSQL no debe bloquear la respuesta gRPC. Una goroutine toma el evento de un canal en búfer (`chan MatchResult`) y realiza la inserción por lotes (*batch insert*) en segundo plano.
+   - Cada vez que una partida finaliza o un jugador sube de nivel, la persistencia en PostgreSQL no debe bloquear la respuesta gRPC. Para evitar pérdida de datos ante una caída de Go, se publica el evento en un **Redis Stream (DLQ)**. Un worker lee de este stream y realiza la inserción en segundo plano.
 2. **Heartbeat y Health Monitor Activo**:
    - Una goroutine en segundo plano con un `time.Ticker` monitorea periódicamente la salud de los servidores de juego en Rust y la base de datos PostgreSQL, actualizando una variable atómica de estado sin penalizar las peticiones de los clientes.
 3. **Manejo Concurrente de Conexiones gRPC / HTTP**:
@@ -355,7 +354,8 @@ Para asegurar la máxima robustez y agilidad durante el ciclo de desarrollo del 
 
 ### 16.4 Protocolo de Reconexión Transitoria y Resiliencia a Microcortes (Tickets de Sesión) (agregado por Victor)
 * **Problema:** En redes Wi-Fi o conexiones con fluctuaciones de señal, una pérdida de socket TCP por 1 o 2 segundos expulsaría al jugador de la partida en el servidor autoritativo de Rust.
-* **Solución:** Se implementa un **`reconnect_ticket` criptográfico** temporal con un tiempo de gracia de 5 segundos (*Grace Period*). Durante este lapso:
-  1. El servidor Rust mantiene al jugador en estado `DISCONNECTED_WAITING`, conservando su entidad y posición en el bucle de simulación.
-  2. Si el cliente reestablece el stream gRPC presentando su ticket, el motor de Rust le envía de inmediato un **Snapshot de Reconciliación** con el estado actual del mundo hídrico y reanuda el envío de ticks sin reiniciar la sesión.
+* **Solución:** Se implementa un **`reconnect_ticket` criptográfico** temporal con un tiempo de gracia de **15 a 30 segundos** (*Grace Period*). Durante este lapso:
+  1. El cliente congela la simulación visual mostrando un mensaje de "Reconectando..." y consulta a Go por el endpoint (IP:Puerto) actualizado del worker de Rust, ya que podría haber cambiado tras un failover.
+  2. El servidor Rust mantiene al jugador en estado `DISCONNECTED_WAITING`, conservando su entidad y pausando el tick de simulación si ocurre un crash mayor.
+  3. Si el cliente reestablece el stream gRPC presentando su ticket, el motor de Rust le envía de inmediato un **Snapshot de Reconciliación** con el estado actual (y `sequence_id` más reciente) y reanuda el envío de ticks.
 

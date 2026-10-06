@@ -82,12 +82,18 @@ package ecostream.gameplay.v1;
 message PlayerAction {
   string player_id = 1;
   uint64 tick_number = 2;
-  oneof action {
-    MoveAction move = 3;
-    RepairPipeAction repair = 4;
-    DivertValveAction divert = 5;
-    LoadFilterAction load_filter = 6;
+  MoveAction move = 3; // Opcional, permite moverse
+  repeated InteractionAction interactions = 4; // Permite ejecutar múltiples acciones 3R concurrentes a la vez (Reparar, Desviar, etc.)
+}
+
+message InteractionAction {
+  enum InteractionType {
+    REPAIR_PIPE = 0;
+    DIVERT_VALVE = 1;
+    LOAD_FILTER = 2;
   }
+  InteractionType type = 1;
+  string target_entity_id = 2;
 }
 
 message MoveAction {
