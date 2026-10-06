@@ -192,13 +192,16 @@ flowchart LR
 ```
 
 ### 10.1 Cifrado y Protección de Transporte (TLS / mTLS)
-- **Producción / Nube**: Canales gRPC sobre TLS (HTTP/2 con ALPN `h2`). Se pueden usar certificados gratuitos de Let's Encrypt o Cloudflare.
-- **Desarrollo / LAN**: gRPC permite operar en modo inseguro (`InsecureChannel`) para simplificar pruebas rápidas en laboratorio, o generar certificados autofirmados mediante un script `make certs`.
+- **Producción / Nube**: Canales gRPC sobre TLS (HTTP/2 con ALPN `h2`) hacia los clientes.
+- **Red Interna (Inter-service)**: Comunicación entre Go y Rust obligatoria mediante **mTLS (Mutual TLS)** para prevenir intrusiones laterales (Zero-Trust).
+- **Datastores**: Conexión a Redis y PostgreSQL obligatoriamente cifrada con TLS y autenticación estricta (AUTH / SCRAM-SHA-256).
 
 ### 10.2 Autenticación y Autorización por Interceptores gRPC
-- Al iniciar sesión en el Gateway Go, el usuario recibe un **Token JWT** firmado que contiene su `user_id`, `username` y `room_id`.
-- Cada llamada gRPC posterior del cliente (tanto en Tauri como en Python) viaja con el token en los metadatos HTTP/2 (`authorization: Bearer <token>`).
-- Tanto Go como Rust implementan un **Interceptor de Servidor (Middleware)**: si el token no existe, está alterado o expiró, la RPC se aborta inmediatamente con código de error gRPC `UNAUTHENTICATED`.
+- Al iniciar sesión en el Gateway Go, el usuario recibe un **Token JWT** firmado. 
+- **Almacenamiento Seguro**: En el cliente Tauri, el JWT NO se guarda en LocalStorage (vulnerable a XSS), sino en la bóveda segura del sistema operativo (Tauri Stronghold / Secure Storage).
+- Cada llamada gRPC posterior del cliente viaja con el token en los metadatos HTTP/2 (`authorization: Bearer <token>`).
+- Los tickets de sesión transitoria (`RoomTicket`) se generan con entropía criptográfica fuerte (256-bit) y se queman atómicamente en Redis tras su uso único para evitar ataques de repetición.
+- Tanto Go como Rust implementan un **Interceptor de Servidor (Middleware)**: si el token no existe, está alterado o expiró, la RPC se aborta.
 
 ### 10.3 Integridad del Estado de Juego (Cero Confianza en el Cliente / Anti-Cheat)
 - **Principio**: *"Nunca confíes en el cliente"*.

@@ -97,8 +97,10 @@ message InteractionAction {
 }
 
 message MoveAction {
-  float target_x = 1;
-  float target_y = 2;
+  // En lugar de coordenadas absolutas (que permiten speedhacks/teletransporte),
+  // se envían vectores de dirección normalizados [-1.0, 1.0].
+  float direction_x = 1;
+  float direction_y = 2;
 }
 
 message RepairPipeAction {
