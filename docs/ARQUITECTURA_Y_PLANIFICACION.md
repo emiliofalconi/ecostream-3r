@@ -10,25 +10,18 @@ Juego multijugador en tiempo real enfocado en las **3R (Reducir, Reusar y Recicl
 > [!CAUTION]
 > **Riesgo Identificado**: Si el Gateway (o proxy de entrada) es una única instancia física o proceso singular, su caída desconecta por completo a todos los clientes, impidiendo login, matchmaking e inicio de partidas. Esto viola los principios de alta disponibilidad en sistemas distribuidos en la nube.
 
-Para resolver esto sin cuellos de botella ni caídas catastróficas, se implementa una arquitectura **Zero Single Point of Failure (Zero-SPOF)**.
+Para resolver esto sin cuellos de botella se elimina el SPOF **en la entrada**: se despliegan **al menos 2 gateways stateless** y el cliente balancea entre ellos. El alcance exacto de la tolerancia a fallos (qué se protege y qué queda como trabajo futuro) está en [ALCANCE_Y_DECISIONES.md](ALCANCE_Y_DECISIONES.md).
 
 ---
 
-## 2. Estrategia de Alta Disponibilidad para el Gateway / Ingress
+## 2. Estrategia de Alta Disponibilidad para el Gateway
 
-Dependiendo del entorno de despliegue (Nube gestionada o Infraestructura propia/Docker), se contemplan dos soluciones estándar de la industria:
+Se adopta **una sola estrategia** en todos los entornos (LAN, Docker multi-host o nube): **resolución por DNS (o lista de endpoints) + balanceo del lado del cliente gRPC**.
 
-### 2.1 En Nube (AWS, GCP, Azure, OCI)
-- **Layer 4 Managed Load Balancer (NLB / Cloud Load Balancing) o DNS Anycast**:
-  - El proveedor de nube asigna una dirección IP virtual (VIP) altamente distribuida backed por BGP Anycast en múltiples Availability Zones (AZs).
-  - Distribuye el tráfico gRPC directo entrante a las réplicas del Gateway Go.
-
-### 2.2 En Entorno Universitario / Bare-Metal / Docker Multi-Host
-- **Balanceo Basado en DNS (CoreDNS / Headless Services)**:
-  - En lugar de usar una IP Virtual (VIP) que crea un cuello de botella y choca con el balanceo nativo, se configura el DNS para devolver múltiples registros A/AAAA (las IPs de cada instancia del Gateway).
-- **Client-Side Load Balancing (Nativo en gRPC)**:
-  - gRPC posee capacidades nativas de resolución de nombres (`dns:///`).
-  - El cliente recibe la lista de endpoints backend vivos. Si un gateway no responde, el canal gRPC del cliente conmuta automáticamente a la siguiente dirección de la lista de forma round-robin, sin intermediarios L4.
+- **Resolución de nombres**: el DNS (o la configuración del cliente) devuelve las direcciones de **todas** las réplicas del Gateway Go.
+- **Client-Side Load Balancing (nativo en gRPC)**: el cliente usa el resolver `dns:///` o una lista de hosts. Si un gateway no responde, el canal gRPC conmuta automáticamente a la siguiente dirección, de forma round-robin y sin intermediarios.
+- **Por qué no una IP virtual (VIP)**: una VIP delante de gRPC oculta las réplicas detrás de una única IP y anula el balanceo nativo del cliente.
+- **Alternativa en nube (no se implementa)**: un balanceador L4 gestionado (NLB o equivalente) puede sustituir al DNS sin cambiar el resto de la arquitectura.
 
 ```mermaid
 flowchart TD
@@ -37,48 +30,33 @@ flowchart TD
         C2["Cliente Python"]
     end
 
-    subgraph EdgeLayer["Capa de Acceso de Alta Disponibilidad"]
-        DNS["Servidor DNS / Headless Service"]
-    end
+    DNS["DNS / Lista de endpoints"]
 
     subgraph GatewayCluster["Cluster de Gateways Stateless (Go)"]
         GW1["Go Gateway (Instancia A)"]
         GW2["Go Gateway (Instancia B)"]
     end
 
-    subgraph ServiceMesh["Service Discovery & Registry"]
-        Consul["Service Registry / Health Monitor (Redis / mDNS)"]
-    end
-
-    subgraph EngineCluster["Cluster de Motores de Simulación (Rust)"]
-        RE1["Rust Engine (Partidas 1..10)"]
-        RE2["Rust Engine (Partidas 11..20)"]
-    end
-
-    subgraph DBCluster["Persistencia de Alta Disponibilidad"]
-        PGPrimary[("PostgreSQL Primario (Read/Write)")]
-        PGStandby[("PostgreSQL Réplica (Hot Standby)")]
-    end
+    RE1["Rust Engine (Partidas en memoria)"]
+    Redis[("Redis: caché de salas activas")]
+    PG[("PostgreSQL 16")]
 
     C1 -->|Resuelve IPs vía dns:///| DNS
     C2 -->|Resuelve IPs vía dns:///| DNS
-    DNS -->|Conexión Directa gRPC| GW1
-    DNS -->|Conexión Directa gRPC| GW2
+    DNS -->|Conexión directa gRPC| GW1
+    DNS -->|Conexión directa gRPC| GW2
 
-    GW1 <-->|Registro y Heartbeat| Consul
-    GW2 <-->|Registro y Heartbeat| Consul
-    RE1 <-->|Registro y Heartbeat| Consul
-    RE2 <-->|Registro y Heartbeat| Consul
+    GW1 -->|ProvisionRoom| RE1
+    GW2 -->|ProvisionRoom| RE1
+    RE1 -->|MatchFinishedEvent| GW1
 
-    GW1 -->|Asigna Sala| RE1
-    GW2 -->|Asigna Sala| RE2
+    C1 -.->|gRPC Stream directo con RoomTicket| RE1
+    C2 -.->|gRPC Stream directo con RoomTicket| RE1
 
-    C1 -.->|gRPC Stream Directo con RoomTicket| RE1
-    C2 -.->|gRPC Stream Directo con RoomTicket| RE1
-
-    GW1 -->|Escrituras| PGPrimary
-    GW2 -->|Escrituras| PGPrimary
-    PGPrimary -.->|Streaming Replication| PGStandby
+    GW1 --> Redis
+    GW2 --> Redis
+    GW1 -->|Escrituras| PG
+    GW2 -->|Escrituras| PG
 ```
 
 ---
@@ -87,17 +65,17 @@ flowchart TD
 
 | Componente que cae | Detección | Mecanismo de Recuperación | Impacto en el Usuario |
 | :--- | :--- | :--- | :--- |
-| **DNS / Headless Service** | DNS Health checks (CoreDNS). | El DNS actualiza los registros A eliminando la instancia caída. | Reconexión de socket de cliente por Client-Side LB. |
-| **Nodo Go Gateway** | Health check gRPC `/grpc.health.v1.Health/Check`. | El cliente gRPC retira la instancia muerta y usa la siguiente IP (Round Robin). | Ninguno (Go es stateless; el cliente cambia de IP sin perder sesión). |
-| **Motor de Juego Rust** | Pérdida de heartbeat (timeout 3s). | Go levanta un nuevo worker; **el cliente solicita a Go la nueva IP de Rust**. | Pausa de 15 a 30 segundos con UI de reconexión. |
-| **PostgreSQL Primario** | Patroni / Keepalived monitor. | Promoción automática a Primario; Go retiene eventos usando Redis Streams (DLQ). | Retardo en confirmaciones; sin pérdida de victorias gracias a DLQ en Redis. |
+| **Nodo Go Gateway** | Falla de conexión en el cliente / `grpc.health.v1.Health`. | El cliente gRPC descarta la instancia caída y usa la siguiente dirección (round-robin). | Ninguno para jugadores en partida; los nuevos logins van a la otra réplica. Go es stateless. |
+| **Motor de Juego Rust** | Cierre del stream gRPC en el cliente; heartbeat de salud en Go. | **La partida en curso se pierde** (restaurar estado queda como trabajo futuro). Go marca la sala como finalizada. | Los clientes vuelven al lobby. El historial ya guardado no se afecta. |
+| **PostgreSQL** | Error en `db.PingContext()` y fallos consecutivos en el Circuit Breaker. | El Circuit Breaker se abre tras 3 fallos; los eventos de fin de partida esperan en una **cola acotada con reintento y backoff**, con contador de descartes. | No se pueden guardar historiales ni iniciar sesión nueva mientras dure la caída; las partidas activas continúan. |
+| **Redis (caché de salas)** | Error de conexión en Go. | Go consulta directamente PostgreSQL (degradación sin pérdida de datos). | Búsqueda de salas algo más lenta. |
 
 ---
 
 ## 4. Desacoplamiento entre Control Plane y Data Plane
 
 Para proteger aún más el sistema de una caída total:
-1. **Control Plane (Go Gateway)**: Solo interviene al inicio (Login, Matchmaking, Creación de Sala).
+1. **Control Plane (Go Gateway)**: Solo interviene al inicio (Login, Matchmaking, Creación de Sala) y al final (recibe el resultado de la partida).
 2. **Data Plane Directo (Rust Game Loop)**:
    - Una vez que el jugador obtiene el token de sala (`RoomTicket`), el cliente se conecta **directamente al stream gRPC nativo del Rust Game Server** asignado.
    - Si el orquestador en Go cae temporalmente, **las partidas en curso en Rust continúan ejecutándose con normalidad** porque la lógica del ciclo de juego en tiempo real no depende sincrónicamente de Go.
@@ -106,7 +84,7 @@ Para proteger aún más el sistema de una caída total:
 
 ## 5. El Cliente Desktop: Tauri (TypeScript) y Python Nativo
 
-Efectivamente, **Tauri utiliza TypeScript (React, Svelte o Vanilla TS/Vite) para toda la interfaz visual y lógica de presentación**, mientras que Python utiliza `pygame` y `grpcio`.
+**Tauri utiliza TypeScript (Vite) para la interfaz visual y la lógica de presentación**, mientras que Python utiliza `pygame` y `grpcio`.
 
 ### Ventajas de una Arquitectura Directa sin Proxies:
 1. **gRPC Nativo Directo sin Proxies Intermedios**:
@@ -115,15 +93,14 @@ Efectivamente, **Tauri utiliza TypeScript (React, Svelte o Vanilla TS/Vite) para
    - A diferencia de Electron (que pesa cientos de megabytes y consume mucha RAM), Tauri usa el Webview nativo del sistema operativo (WebKitGTK en Linux, WebView2 en Windows), pesando unos pocos megabytes.
 3. **Client-Side Load Balancing Integrado**:
    - Ambos clientes resuelven réplicas gRPC de forma nativa sin intermediarios.
----
 
 ---
 
-## 7. Apartado Visual: Estética Pixel Art 2D Retro
+## 6. Apartado Visual: Estética Pixel Art 2D Retro
 
 Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con ambientación ecológica rural:
 
-### 7.1 Paleta de Color y Ambiente (Rural Tech & Eco-Water)
+### 6.1 Paleta de Color y Ambiente (Rural Tech & Eco-Water)
 - **Terreno y Naturaleza**:
   - Caminos de tierra batida (`#C29A64`), pasto verde natural con tonalidades cálidas (`#5A8F34` y `#7CB342`), cercas de madera rústica y flores silvestres.
 - **Instalaciones de Agua**:
@@ -135,7 +112,7 @@ Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con am
 - **Avatares de Jugadores**:
   - Granjeros/Técnicos ecológicos con overoles de mezclilla (`denim overalls`), sombreros de paja o gorras, y una animación de 4 direcciones caminando y sosteniendo una herramienta (llave de tuerca rural o regadera).
 
-### 7.2 Especificaciones Técnicas de los Sprites
+### 6.2 Especificaciones Técnicas de los Sprites
 1. **Resolución Base**:
    - Tiles de **16x16 px** (o 32x32 px escalados) con contornos limpios y técnica de pixel art nítida.
 2. **Animaciones Clave**:
@@ -144,9 +121,9 @@ Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con am
    - Brillo y floración en cultivos cuando reciben agua reusada exitosamente.
 ---
 
-## 9. Despliegue de Red: LAN vs Servidor Propio vs Nube
+## 7. Despliegue de Red: LAN vs Servidor Propio vs Nube
 
-### 9.1 ¿Qué pasa si los servidores se lanzan en LAN (ej. Laboratorio UCAB o Casa)?
+### 7.1 ¿Qué pasa si los servidores se lanzan en LAN (ej. Laboratorio UCAB o Casa)?
 - **Funcionamiento Nativo**:
   - Tanto gRPC como PostgreSQL operan sobre TCP/IP estándar. En una red local (LAN o WiFi compartida), el servidor Go y el servidor Rust se configuran para escuchar en `0.0.0.0:PUERTO` (en lugar de `127.0.0.1:PUERTO`).
   - Los clientes en otras máquinas de la misma red solo necesitan la **IP privada del host** (ej. `192.168.1.50:50051` o `10.x.x.x`).
@@ -157,7 +134,7 @@ Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con am
     - `GAME_SERVER_PORT=50052`.
   - Se puede implementar **mDNS / Zeroconf** (Bonjour/Avahi) para auto-descubrimiento en LAN: el cliente busca automáticamente `_ecostream._tcp.local` sin que nadie tenga que escribir una IP manualmente.
 
-### 9.2 ¿Se necesita tener IP Pública para jugar a través de Internet con Servidor Propio?
+### 7.2 ¿Se necesita tener IP Pública para jugar a través de Internet con Servidor Propio?
 **Respuesta directa: NO es estrictamente necesario tener IP pública fija.** Hay tres vías para resolverlo:
 
 | Método | ¿Requiere IP Pública? | ¿Requiere Abrir Puertos en Router? | Descripción / Recomendación |
@@ -169,17 +146,17 @@ Adoptamos una dirección de arte en **Pixel Art 2D (vista top-down 3/4)** con am
 
 ---
 
-## 10. Gestión de Seguridad e Integridad
+## 8. Gestión de Seguridad e Integridad
 
 En un sistema distribuido en tiempo real, la seguridad y la integridad se dividen en 4 capas defensivas:
 
 ```mermaid
 flowchart LR
     subgraph CapaRed["1. Capa de Transporte"]
-        TLS["TLS 1.3 / mTLS (Cifrado en tránsito y certificados)"]
+        TLS["TLS en producción (red Docker privada en desarrollo)"]
     end
     subgraph CapaAuth["2. Identidad y Sesión"]
-        JWT["JWT Tokens con firma asimétrica (Ed25519)"]
+        JWT["JWT HS256 + RoomTicket firmado con HMAC"]
     end
     subgraph CapaLogica["3. Integridad Autoritativa"]
         ServerAuth["Servidor Autoritativo (Rust valida distancias, cooldowns y recursos)"]
@@ -191,30 +168,35 @@ flowchart LR
     CapaRed --> CapaAuth --> CapaLogica --> CapaPersistencia
 ```
 
-### 10.1 Cifrado y Protección de Transporte (TLS / mTLS)
+El detalle de riesgos y mitigaciones está en [SEGURIDAD.md](SEGURIDAD.md).
+
+### 8.1 Cifrado y Protección de Transporte
 - **Producción / Nube**: Canales gRPC sobre TLS (HTTP/2 con ALPN `h2`) hacia los clientes.
-- **Red Interna (Inter-service)**: Comunicación entre Go y Rust obligatoria mediante **mTLS (Mutual TLS)** para prevenir intrusiones laterales (Zero-Trust).
-- **Datastores**: Conexión a Redis y PostgreSQL obligatoriamente cifrada con TLS y autenticación estricta (AUTH / SCRAM-SHA-256).
+- **Desarrollo / LAN**: Red Docker privada; gRPC puede operar sin TLS (`InsecureChannel`) o con certificados autofirmados.
+- **mTLS entre servicios**: opcional en producción (trabajo futuro).
+- **Secretos**: siempre por variable de entorno (`.env`), sin valores por defecto en el código ni en `docker-compose.yml`.
 
-### 10.2 Autenticación y Autorización por Interceptores gRPC
-- Al iniciar sesión en el Gateway Go, el usuario recibe un **Token JWT** firmado. 
-- **Almacenamiento Seguro**: En el cliente Tauri, el JWT NO se guarda en LocalStorage (vulnerable a XSS), sino en la bóveda segura del sistema operativo (Tauri Stronghold / Secure Storage).
-- Cada llamada gRPC posterior del cliente viaja con el token en los metadatos HTTP/2 (`authorization: Bearer <token>`).
-- Los tickets de sesión transitoria (`RoomTicket`) se generan con entropía criptográfica fuerte (256-bit) y se queman atómicamente en Redis tras su uso único para evitar ataques de repetición.
-- Tanto Go como Rust implementan un **Interceptor de Servidor (Middleware)**: si el token no existe, está alterado o expiró, la RPC se aborta.
+### 8.2 Autenticación y Autorización por Interceptores gRPC
+- **Contraseñas**: el cliente envía la contraseña por un canal TLS (en producción) y el Gateway Go la verifica con **bcrypt**. Nunca se envía un hash desde el cliente, porque se convertiría en la contraseña real.
+- Al iniciar sesión, el usuario recibe un **Token JWT firmado con HS256** (secreto compartido entre Go y Rust).
+- **Almacenamiento seguro**: en el cliente Tauri, el JWT NO se guarda en `LocalStorage` (vulnerable a XSS), sino en el almacenamiento seguro del sistema (Tauri Stronghold / keyring).
+- Cada llamada gRPC posterior viaja con el token en los metadatos HTTP/2 (`authorization: Bearer <token>`), nunca en el cuerpo de la petición.
+- El **`RoomTicket`** es un token **firmado con HMAC** que incluye `room_id`, `user_id` y una expiración corta (`ROOM_TICKET_TTL`, 60 s). Rust lo valida **sin consultar a Go**.
+- Tanto Go como Rust implementan un **Interceptor de Servidor (Middleware)**: si el token no existe, está alterado o expiró, la RPC se aborta con `UNAUTHENTICATED`.
 
-### 10.3 Integridad del Estado de Juego (Cero Confianza en el Cliente / Anti-Cheat)
+### 8.3 Integridad del Estado de Juego (Cero Confianza en el Cliente / Anti-Cheat)
 - **Principio**: *"Nunca confíes en el cliente"*.
 - El cliente **no tiene permiso de enviar**: *"Me moví a la posición (500, 200)"* o *"Ya reparé la tubería 4"*.
-- El cliente **solo envía vectores de intención**: *"Quiero moverme a la derecha"* o *"Presioné reparar en la tubería 4"*.
+- El cliente **solo envía intenciones**: un **vector de dirección** (`direction_x`, `direction_y`) o *"Presioné reparar en la tubería 4"*.
 - El servidor **Rust valida autoritativamente**:
-  1. **Velocidad máxima**: ¿Es físicamente posible que el jugador se mueva a esa posición en 50ms? Si no, se descarta (anti-speedhack).
-  2. **Proximidad física**: ¿Está el jugador a una distancia menor a 1.5 tiles de la tubería para repararla? Si está lejos, la acción es ignorada.
-  3. **Cadencia / Rate-Limiting**: Se rechazan más de $N$ acciones por segundo para evitar ataques de denegación de servicio o flood de paquetes.
+  1. **Identidad**: el `RoomTicket` es válido, no ha expirado y corresponde a esa sala.
+  2. **Velocidad máxima**: el vector de dirección se normaliza y el desplazamiento por tick nunca supera `max_speed × Δt` (anti-speedhack y anti-teletransporte).
+  3. **Proximidad física**: ¿Está el jugador a una distancia menor a 1.5 tiles de la tubería para repararla? Si está lejos, la acción es ignorada.
+  4. **Cadencia / Rate-Limiting**: Se rechazan más de $N$ acciones por segundo para evitar ataques de denegación de servicio o flood de paquetes.
 
 ---
 
-## 11. Flujo de Unión a Partidas: Matchmaking, Lobbies y Handshake
+## 9. Flujo de Unión a Partidas: Matchmaking, Lobbies y Handshake
 
 Para que los jugadores (tanto de TypeScript/Tauri como de Python) puedan encontrarse y jugar juntos de forma ordenada, se diseña un sistema de **Salas (Lobbies) y Handshake de Dos Fases**:
 
@@ -228,7 +210,7 @@ sequenceDiagram
 
     Note over Cliente,Gateway: Fase 1: Creación / Unión en Control Plane (Go)
     Cliente->>Gateway: RPC CreateOrJoinRoom(username, room_code, mode)
-    Gateway->>DB: Validar o registrar sala (Status: WAITING, max 4 jugadores)
+    Gateway->>DB: Registrar sala o reservar cupo (UPDATE atómico: current_players < max_players)
     Gateway->>Rust: RPC ProvisionRoom(room_id, seed, max_players)
     Rust-->>Gateway: OK (Room Ready en puerto/endpoint X)
     Gateway-->>Cliente: RoomTicket { room_id, auth_token, engine_endpoint }
@@ -247,27 +229,27 @@ sequenceDiagram
     Note over Cliente,Rust: ¡Comienza el bucle de juego a 20 Hz!
 ```
 
-### 11.1 Métodos para Unirse a una Partida
+### 9.1 Métodos para Unirse a una Partida
 1. **Unión por Código de Sala Privada (Room Code - ej. `AGUA-42`)**:
    - Ideal para jugar con compañeros en clase o defensas de la materia.
    - El Jugador 1 crea la sala y el sistema le da un código corto de 4 a 6 caracteres.
    - Los Jugadores 2, 3 y 4 simplemente ingresan el código para unirse a la misma instancia.
 2. **Emparejamiento Rápido (Quick Match)**:
    - El jugador presiona "Partida Rápida".
-   - El servicio Go busca en PostgreSQL/Memoria una sala con estado `WAITING` con cupo libre (< 4 jugadores) y lo empareja al instante; si no existe ninguna, crea una nueva automáticamente.
+   - El servicio Go busca primero en la caché de Redis (y si no está disponible, en PostgreSQL) una sala con estado `WAITING` con cupo libre (< 4 jugadores). Reserva el cupo con un `UPDATE ... WHERE current_players < max_players` atómico; si no existe ninguna sala, crea una nueva automáticamente.
 3. **Inclusión de Bots**:
    - Si tras 10 segundos no se llena la sala y el creador presiona *"Iniciar con Bots"*, el gateway o el cliente lanza la señal para que el bot de Python ocupe los asientos vacíos.
 
 ---
 
-## 12. Concurrencia en Go: Justificación y Uso Eficiente de Goroutines
+## 10. Concurrencia en Go: Justificación y Uso Eficiente de Goroutines
 
-### 12.1 ¿Tiene sentido lógico y es eficiente usar Goroutines aquí?
+### 10.1 ¿Tiene sentido lógico y es eficiente usar Goroutines aquí?
 **Sí, absolutamente.** Go fue diseñado alrededor del modelo CSP (*Communicating Sequential Processes*). Las goroutines son hilos en espacio de usuario (*green threads*) que pesan apenas **2 KB** de memoria inicial (frente a 1-8 MB de un hilo de SO nativo).
 
-### 12.2 ¿Dónde se aplican las Goroutines con propósito tangible?
+### 10.2 ¿Dónde se aplican las Goroutines con propósito tangible?
 1. **Dispatcher Asíncrono de Eventos y Auditoría (`Worker Pool`)**:
-   - Cada vez que una partida finaliza o un jugador sube de nivel, la persistencia en PostgreSQL no debe bloquear la respuesta gRPC. Para evitar pérdida de datos ante una caída de Go, se publica el evento en un **Redis Stream (DLQ)**. Un worker lee de este stream y realiza la inserción en segundo plano.
+   - Cada vez que una partida finaliza, la persistencia en PostgreSQL no debe bloquear la respuesta gRPC. El evento entra en un **canal acotado** (`chan MatchResult` con capacidad fija) y un grupo de goroutines lo inserta en segundo plano con **reintento y backoff exponencial**. Si la cola se llena, el evento se descarta pero se **cuenta** (métrica expuesta en `/readyz`); al apagar el servicio la cola se vacía. Una cola durable (Redis Streams) queda como trabajo futuro.
 2. **Heartbeat y Health Monitor Activo**:
    - Una goroutine en segundo plano con un `time.Ticker` monitorea periódicamente la salud de los servidores de juego en Rust y la base de datos PostgreSQL, actualizando una variable atómica de estado sin penalizar las peticiones de los clientes.
 3. **Manejo Concurrente de Conexiones gRPC / HTTP**:
@@ -277,7 +259,7 @@ sequenceDiagram
 
 ---
 
-## 13. Aplicación de 5 Patrones de Diseño Nativos de la Nube (Cloud-Native)
+## 11. Aplicación de 5 Patrones de Diseño Nativos de la Nube (Cloud-Native)
 
 Se han seleccionado 5 patrones canónicos del catálogo de arquitectura en la nube (Microsoft Azure / AWS Architecture Patterns), justificados con motivos y razones palpables:
 
@@ -287,11 +269,11 @@ Se han seleccionado 5 patrones canónicos del catálogo de arquitectura en la nu
 | **2** | **Circuit Breaker (Disyuntor)** | Cliente / Gateway Go hacia Rust y Postgres (`sony/gobreaker`) | Si el clúster de base de datos o un worker de Rust colapsa, evita inundarlo de peticiones en cascada (*cascading failure*). El disyuntor se "abre" tras 3 fallos consecutivos, devolviendo un error controlado inmediato y permitiendo que el sistema se recupere. |
 | **3** | **Health Endpoint Monitoring Pattern** | Servidor Go (`/healthz`, `/readyz`, gRPC Health v1) | Permite que orquestadores de contenedores (Kubernetes / Docker Swarm / Load Balancers) sondeen si el contenedor está vivo (*Liveness*) y listo para recibir tráfico (*Readiness*). Si falla, la nube lo reinicia automáticamente. |
 | **4** | **Authoritative Server Pattern** | Servidor de Simulación Rust | Patrón nativo de juegos distribuidos en red: toda la física, lógica de fluidos, cálculo de consumo de agua y validación de las 3R reside en el servidor. Evita desincronizaciones entre jugadores y hace imposible el engaño (*cheating*). |
-| **5** | **Cache-Aside / Materialized State Pattern** | Caché de Estado Rápido (Go/Memoria compartida) | El estado de las salas activas y el emparejamiento rápido se consulta en memoria/caché atómica en lugar de golpear PostgreSQL en cada tick o consulta de lobby. Solo cuando la sala finaliza o cambia de estado crítico se escribe a Postgres. |
+| **5** | **Cache-Aside Pattern** | Caché de salas activas en Redis (con TTL), consultada por el Gateway Go | El listado de salas y el emparejamiento rápido se leen primero de Redis en lugar de golpear PostgreSQL en cada consulta de lobby. Si la clave no existe o Redis no responde, se lee de PostgreSQL (fuente de verdad) y se repuebla la caché. Redis nunca es un punto crítico: su caída solo hace más lenta la búsqueda de salas. |
 
 ---
 
-## 14. Documentación con Swagger / OpenAPI y gRPC-Gateway
+## 12. Documentación con Swagger / OpenAPI y gRPC-Gateway
 
 Para cumplir con la documentación de estándares de la industria y facilitar pruebas desde navegador (sin necesidad de herramientas gRPC dedicadas como BloomRPC/Postman gRPC):
 
@@ -304,16 +286,16 @@ Para cumplir con la documentación de estándares de la industria y facilitar pr
 
 ---
 
-## 15. Monitoreo de Salud y Telemetría de Latencia (RTT Ping-Pong)
+## 13. Monitoreo de Salud y Telemetría de Latencia (RTT Ping-Pong)
 
-### 15.1 Monitoreo de Salud del Servidor (Server-Side Health Probes)
+### 13.1 Monitoreo de Salud del Servidor (Server-Side Health Probes)
 - **Implementación del estándar oficial gRPC**: `grpc.health.v1.Health`.
 - **Endpoints de Diagnóstico**:
   - `GET /healthz` (Liveness): Verifica que el proceso Go esté respondiendo.
   - `GET /readyz` (Readiness): Verifica que la conexión con PostgreSQL y los workers de Rust estén activas.
   - Métricas de uso de Goroutines: `runtime.NumGoroutine()` expuesto para monitorear posibles fugas de memoria o fugas de goroutines (*goroutine leaks*).
 
-### 15.2 Medición de Latencia en el Cliente en Plena Partida (RTT Display)
+### 13.2 Medición de Latencia en el Cliente en Plena Partida (RTT Display)
 Para que el jugador vea en pantalla su latencia en vivo (indicador tipo `Ping: 24 ms` en verde/amarillo/rojo):
 - **Mecanismo Ping-Pong de Eco en el Stream**:
   1. Cada segundo, el cliente incluye en su stream gRPC una marca de tiempo:
@@ -339,26 +321,26 @@ Para que el jugador vea en pantalla su latencia en vivo (indicador tipo `Ping: 2
 
 ---
 
-## 16. Mejoras y Optimizaciones de Arquitectura (agregado por Victor)
+## 14. Mejoras y Optimizaciones de Arquitectura (agregado por Victor)
 
 Para asegurar la máxima robustez y agilidad durante el ciclo de desarrollo del sistema distribuido, se incorporan las siguientes optimizaciones de ingeniería:
 
-### 16.1 Gestión y Toolchain Automatizado de Protocol Buffers con `buf` / Makefile (agregado por Victor)
+### 14.1 Gestión y Toolchain Automatizado de Protocol Buffers con `buf` / Makefile (agregado por Victor)
 * **Problema:** En un ecosistema políglota con 4 lenguajes (Go, Rust, TypeScript, Python), la compilación manual de `.proto` con `protoc` genera inconsistencias de versión, rutas de salida desordenadas y fallos de tipado cruzado.
 * **Solución:** Centralizar la compilación de contratos mediante `buf` (o un `Makefile` / script automatizado `scripts/gen_protos.sh`). Con un solo comando, se compilan y validan los stubs tipados para Go (`protoc-gen-go`), Rust (`prost` / `tonic-build`), TypeScript (`ts-proto` / `@bufbuild/protobuf`) y Python (`grpcio-tools`), garantizando total coherencia entre clientes y servidores.
 
-### 16.2 Estrategia de Conectividad gRPC HTTP/2 Nativa en Tauri (agregado por Victor)
+### 14.2 Estrategia de Conectividad gRPC HTTP/2 Nativa en Tauri (agregado por Victor)
 * **Problema:** Las aplicaciones web en navegadores tradicionales no pueden abrir sockets HTTP/2 puros arbitrarios y requieren proxies intermedios (como Envoy para gRPC-Web).
 * **Solución:** Aprovechar la arquitectura de **Tauri**. En lugar de depender de proxies externos en desarrollo, el cliente utiliza el runtime nativo de Tauri (Rust Core IPC o `@grpc/grpc-js` / streaming directo HTTP/2) para conectarse directamente a los puertos gRPC de Go y Rust con latencia mínima y cero intermediarios.
 
-### 16.3 Coordinación de Salas y Estado en PostgreSQL/Redis para Gateways 100% Stateless (agregado por Victor)
-* **Problema:** Si dos instancias de Gateway en Go están activas tras un balanceador o IP flotante (VIP), un jugador puede crear una sala en el Gateway 1 y otro jugador puede intentar unirse a través del Gateway 2.
-* **Solución:** Ningún Gateway almacenará el mapa de salas en su memoria RAM local aislada. La asignación de sala (`RoomID -> RustWorkerEndpoint`) se registra atómicamente en PostgreSQL (o Redis ligero de coordinación) con estados (`WAITING`, `RUNNING`, `FINISHED`). Esto garantiza que cualquier Gateway pueda despachar a los clientes a la sala y worker de Rust correspondiente sin importar por qué réplica ingresaron.
+### 14.3 Coordinación de Salas y Estado en PostgreSQL/Redis para Gateways 100% Stateless (agregado por Victor)
+* **Problema:** Si dos instancias de Gateway en Go están activas, un jugador puede crear una sala en el Gateway 1 y otro jugador puede intentar unirse a través del Gateway 2.
+* **Solución:** Ningún Gateway almacenará el mapa de salas en su memoria RAM local aislada. La asignación de sala (`RoomID -> RustWorkerEndpoint`) se registra en **PostgreSQL (fuente de verdad)** con estados (`WAITING`, `RUNNING`, `FINISHED`) y el cupo se reserva con un `UPDATE ... WHERE current_players < max_players` atómico. **Redis solo actúa como caché de lectura** de las salas activas. Esto garantiza que cualquier Gateway pueda despachar a los clientes a la sala y worker de Rust correspondiente sin importar por qué réplica ingresaron.
 
-### 16.4 Protocolo de Reconexión Transitoria y Resiliencia a Microcortes (Tickets de Sesión) (agregado por Victor)
+### 14.4 Protocolo de Reconexión Transitoria y Resiliencia a Microcortes (Tickets de Sesión) (agregado por Victor)
 * **Problema:** En redes Wi-Fi o conexiones con fluctuaciones de señal, una pérdida de socket TCP por 1 o 2 segundos expulsaría al jugador de la partida en el servidor autoritativo de Rust.
-* **Solución:** Se implementa un **`reconnect_ticket` criptográfico** temporal con un tiempo de gracia de **15 a 30 segundos** (*Grace Period*). Durante este lapso:
-  1. El cliente congela la simulación visual mostrando un mensaje de "Reconectando..." y consulta a Go por el endpoint (IP:Puerto) actualizado del worker de Rust, ya que podría haber cambiado tras un failover.
-  2. El servidor Rust mantiene al jugador en estado `DISCONNECTED_WAITING`, conservando su entidad y pausando el tick de simulación si ocurre un crash mayor.
-  3. Si el cliente reestablece el stream gRPC presentando su ticket, el motor de Rust le envía de inmediato un **Snapshot de Reconciliación** con el estado actual (y `sequence_id` más reciente) y reanuda el envío de ticks.
+* **Solución:** Se implementa un **`reconnect_ticket`** temporal (token aleatorio de al menos 128 bits) con un tiempo de gracia único de **10 segundos** (`RECONNECT_GRACE_SECONDS`, *Grace Period*). Este mecanismo cubre **micro-cortes de red del cliente**; no cubre la caída del servidor Rust (la partida se pierde, ver §3). Durante este lapso:
+  1. El cliente muestra un mensaje de "Reconectando..." y reintenta con *Exponential Backoff* contra el mismo endpoint de Rust.
+  2. El servidor Rust mantiene al jugador en estado `DISCONNECTED_WAITING`, conservando su entidad y posición en el bucle de simulación.
+  3. Si el cliente reestablece el stream gRPC presentando su ticket, el motor de Rust le envía de inmediato un **Snapshot de Reconciliación** con el estado actual del mundo hídrico y reanuda el envío de ticks sin reiniciar la sesión. Si vence la gracia, el jugador se elimina de la sala.
 
