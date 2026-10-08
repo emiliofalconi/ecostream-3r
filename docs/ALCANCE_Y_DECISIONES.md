@@ -59,6 +59,7 @@ La documentación describe el diseño **objetivo**. La rama `fase1` aún no lo c
 | :--- | :--- |
 | Rust valida el `RoomTicket` firmado | No valida ningún token; el ticket es `tkt_<sala>_<usuario>_<timestamp>` sin firma |
 | `MoveAction` es una intención de dirección | `MoveAction.target_position` asigna la posición directamente (teletransporte) |
+| El progreso de reparación lo calcula el servidor | `RepairPipeAction.repair_progress_delta` lo envía el cliente |
 | Go ↔ Rust mediante `ProvisionRoom` y `MatchFinishedEvent` | Ninguno de los dos RPC existe; el endpoint de Rust es fijo |
 | Caché de salas en Redis | El código y el `docker-compose.yml` no usan Redis |
 | Cupo de sala atómico | `JoinRoom` no controla el cupo |

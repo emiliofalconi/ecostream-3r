@@ -36,7 +36,7 @@ Para fomentar la coordinación en tiempo real entre los clientes (TypeScript y P
 3. **El Químico / Operador de Planta (Reciclador)**:
    - Procesa los lodos y residuos en la planta de tratamiento, optimizando los químicos y limpiando filtros atascados.
 
-> *Nota:* Cualquiera puede realizar cualquier acción básica, pero tener roles o coordinarse divide las tareas eficientemente en partidas intensas.
+> *Nota:* Cualquiera puede realizar cualquier acción básica. En el MVP los roles son **cosméticos** (nombre, color y sprite); un **bonus opcional** por rol (por ejemplo, +20 % de velocidad en la acción de su R) puede añadirse después, ya que hoy ninguna regla del servidor distingue los roles.
 
 ---
 
@@ -80,25 +80,21 @@ syntax = "proto3";
 package ecostream.gameplay.v1;
 
 message PlayerAction {
-  string player_id = 1;
-  uint64 tick_number = 2;
-  MoveAction move = 3; // Opcional, permite moverse
-  repeated InteractionAction interactions = 4; // Permite ejecutar múltiples acciones 3R concurrentes a la vez (Reparar, Desviar, etc.)
-}
+  uint64 action_id = 1;
 
-message InteractionAction {
-  enum InteractionType {
-    REPAIR_PIPE = 0;
-    DIVERT_VALVE = 1;
-    LOAD_FILTER = 2;
+  oneof action_type {
+    MoveAction move = 2;                      // Intención de movimiento (no una posición)
+    RepairPipeAction repair_pipe = 3;         // 1. REDUCIR (Reparación de fugas)
+    DivertValveAction divert_valve = 4;       // 2. REUSAR (Desvío de aguas grises)
+    OperateRecycleAction operate_recycle = 5; // 3. RECICLAR (Planta de purificación)
   }
-  InteractionType type = 1;
-  string target_entity_id = 2;
 }
+// Moverse y actuar en el mismo tick se envía como DOS mensajes PlayerAction.
 
 message MoveAction {
   // En lugar de coordenadas absolutas (que permiten speedhacks/teletransporte),
-  // se envían vectores de dirección normalizados [-1.0, 1.0].
+  // se envía un vector de dirección en [-1.0, 1.0]. El servidor lo normaliza y
+  // calcula la nueva posición con max_speed × Δt.
   float direction_x = 1;
   float direction_y = 2;
 }
@@ -109,8 +105,24 @@ message RepairPipeAction {
 
 message DivertValveAction {
   uint32 valve_id = 1;
-  enum WaterRoute { DRAIN = 0; IRRIGATION = 1; RECYCLE_PLANT = 2; }
-  WaterRoute route = 2;
+  WaterDestination destination = 2;
+}
+
+enum WaterDestination {
+  DESTINATION_UNSPECIFIED = 0;
+  DESTINATION_SEWER = 1;          // Drenaje (derroche)
+  DESTINATION_IRRIGATION = 2;     // Huertos y parcelas (Reuso)
+  DESTINATION_RECYCLE_PLANT = 3;  // Planta de tratamiento (Reciclaje)
+}
+
+message OperateRecycleAction {
+  uint32 plant_id = 1;
+  enum RecycleOp {
+    RECYCLE_OP_LOAD_FILTER = 0;   // Cargar material filtrante
+    RECYCLE_OP_FLUSH_SLUDGE = 1;  // Limpiar lodos acumulados
+    RECYCLE_OP_BOOST_PUMP = 2;    // Activar bomba de filtración
+  }
+  RecycleOp operation = 2;
 }
 
 message GameWorldState {
@@ -128,23 +140,24 @@ message GameWorldState {
 
 ## 7. Experiencia en los Clientes
 
-1. **Cliente Web en TypeScript**:
-   - Renderizado con **HTML5 Canvas / PixiJS / Phaser**.
+1. **Cliente de Escritorio en TypeScript (Tauri)**:
+   - Renderizado con **HTML5 Canvas 2D** sobre el Webview nativo de Tauri.
    - Muestra el mapa top-down con la presa, la ciudad, las tuberías con animaciones de agua y los avatares de los jugadores moviéndose e interactuando con controles de teclado (WASD / Flechas + Espacio para interactuar).
 2. **Cliente en Python**:
-   - Dos posibles modalidades:
-     - **Modo CLI / TUI (Textual/Curses)**: Renderiza el mapa en caracteres ASCII / consola con barras de progreso de embalse, tuberías y estado de jugadores.
-     - **Modo Agente / Bot Inteligente**: Corre en background simulando un compañero automático que busca la fuga más cercana y la repara, ideal para pruebas de carga y evaluación de la cátedra sin requerir siempre 4 personas humanas conectadas.
+   - Dos modalidades:
+     - **Modo interactivo (Pygame)**: ventana gráfica con el mismo mapa, barras de embalse y estado de jugadores, controlada con el teclado.
+     - **Modo Agente / Bot (`--bot`)**: corre sin interfaz simulando un compañero automático que busca la fuga más cercana y la repara, ideal para pruebas de carga y evaluación de la cátedra sin requerir siempre 4 personas humanas conectadas.
 
 ---
 
 ## 8. Resiliencia de Sesión y Reconexión Rápida (agregado por Victor)
 
-Para evitar que jugadores pierdan su progreso ante microcortes de red o caídas transitorias de paquetes durante la simulación a 20 Hz:
+Para evitar que jugadores pierdan su progreso ante microcortes de red o caídas transitorias de paquetes durante la simulación a 20 Hz (el valor de la gracia se define una sola vez como `RECONNECT_GRACE_SECONDS = 10` en [ALCANCE_Y_DECISIONES.md](ALCANCE_Y_DECISIONES.md)):
 
 1. **Ticket de Sesión Efímero (`reconnect_ticket`) (agregado por Victor)**:
-   - Al unirse a la sala, el servidor Rust emite un token de sesión de 64 bits.
-   - Si el stream gRPC se interrumpe, el servidor mantiene la entidad del jugador en la posición actual durante un margen de gracia de **5 segundos**.
+   - Al unirse a la sala, el servidor Rust emite un token de sesión aleatorio de al menos 128 bits.
+   - Si el stream gRPC se interrumpe, el servidor mantiene la entidad del jugador en la posición actual durante un margen de gracia de **10 segundos**.
+   - Este mecanismo cubre **micro-cortes de red del cliente**; si el servidor Rust cae, la partida termina y los clientes vuelven al lobby.
 2. **Snapshot de Reconciliación Inmediato (agregado por Victor)**:
    - Al reconectar con el ticket válido, el cliente no reinicia el juego: recibe un `GameWorldSnapshot` completo del tick actual y continúa el bucle de renderizado fluidamente.
 

@@ -25,7 +25,7 @@ El plan de pruebas se estructura en 5 niveles complementarios diseñados para va
 ### 2.1 Casos de Prueba
 1. **Acción REDUCIR (`RepairPipeAction`):**
    - Serializar y deserializar paquete binario de soldadura/reparación de tubería.
-   - Validar que el payload mantenga el `pipe_id` y el incremento de progreso (`repair_progress_delta`).
+   - Validar que el payload mantenga el `pipe_id`. El progreso de reparación lo calcula el servidor; el cliente no envía incrementos (principio de cero confianza).
 2. **Acción REUSAR (`DivertValveAction`):**
    - Validar conmutación de compuertas hacia `DESTINATION_IRRIGATION` (riego) o `DESTINATION_RECYCLE_PLANT`.
 3. **Acción RECICLAR (`OperateRecycleAction`):**
@@ -34,7 +34,7 @@ El plan de pruebas se estructura en 5 niveles complementarios diseñados para va
    - Empaquetar métricas hídricas: nivel de embalse (%), pureza (%) y litros ahorrados.
    - Validar cálculo matemático de RTT Ping-Pong en el cliente: $\text{RTT} = \text{ClientNow} - \text{EchoTimestampMs}$.
 5. **Tickets de Reconexión Rápida (`reconnect_ticket`):**
-   - Verificar integridad del ticket de gracia de 5 segundos ante microcortes.
+   - Verificar que el ticket (token aleatorio de ≥ 128 bits) sea aceptado dentro de la gracia de 10 segundos (`RECONNECT_GRACE_SECONDS`) y rechazado después.
 
 ---
 
@@ -49,7 +49,7 @@ El plan de pruebas se estructura en 5 niveles complementarios diseñados para va
 
 ### 3.2 Criterio de Éxito
 - Recepción de token JWT con expiración válida.
-- Obtención de `room_code` corto (4-6 caracteres) y `RoomTicket` criptográfico.
+- Obtención de `room_code` corto (4-6 caracteres) y `RoomTicket` firmado con HMAC y expiración corta (60 s).
 - Apertura de stream HTTP/2 bidireccional recibiendo paquetes de estado cada 50 ms.
 - Telemetría de latencia visible en consola o HUD (estado verde < 60ms en entorno local).
 
@@ -63,7 +63,7 @@ Evaluar el comportamiento y consumo de recursos de los backends (Rust y Go) ante
 ### 4.2 Escenarios de Carga
 - **Escenario Leve (Línea Base):** 5 salas, 10 bots concurrentes.
 - **Escenario Medio:** 15 salas, 50 bots concurrentes.
-- **Escenario Crítico (Estrés Máximo):** 25 salas, 100 bots concurrentes enviando acciones a 20 Hz (2,000 peticiones/segundo).
+- **Escenario Crítico (Estrés Máximo) — *Opcional*:** 25 salas, 100 bots concurrentes enviando acciones a 20 Hz (2,000 peticiones/segundo). Depende de la capacidad de la máquina de pruebas.
 
 ### 4.3 Métricas a Evaluar
 1. **Estabilidad de Ticks en Rust:** Comprobar que el delta entre ticks se mantenga en $50\text{ ms} \pm 5\text{ ms}$ sin degradación severa.
@@ -75,7 +75,7 @@ Evaluar el comportamiento y consumo de recursos de los backends (Rust y Go) ante
 
 ## 5. Nivel 4: Pruebas de Resiliencia y Caos (Chaos Engineering)
 
-Para defender la arquitectura **Zero-SPOF** y el uso de **patrones nativos de la nube**, se ejecutan tres pruebas de inyección forzada de fallos:
+Para defender la arquitectura (sin SPOF en la entrada) y el uso de **patrones nativos de la nube**, se ejecutan pruebas de inyección forzada de fallos. Los resultados esperados corresponden al alcance definido en [ALCANCE_Y_DECISIONES.md](ALCANCE_Y_DECISIONES.md).
 
 ### 5.1 Prueba A: Caída de la Base de Datos y Activación del Circuit Breaker
 1. **Acción:** Detener el contenedor de base de datos durante el transcurso de una partida:
@@ -85,36 +85,43 @@ Para defender la arquitectura **Zero-SPOF** y el uso de **patrones nativos de la
 2. **Comportamiento Esperado:**
    - El Gateway Go detecta la pérdida de conexión.
    - El **Circuit Breaker** (`sony/gobreaker`) conmuta a estado **`Open`** tras 3 intentos fallidos consecutivos.
-   - Los eventos de cierre de partida se encolan en memoria/buffer del **Worker Pool** de Goroutines sin botar excepciones no controladas.
+   - Los eventos de cierre de partida se encolan en la **cola acotada** del **Worker Pool** de Goroutines, con reintento y backoff exponencial, sin botar excepciones no controladas.
    - El endpoint `/readyz` responde `503 Service Unavailable`, pero el proceso Go sigue vivo (`/healthz` responde `200 OK`).
+   - Las partidas en curso en Rust **continúan** con normalidad.
 3. **Recuperación:**
    ```bash
    docker start postgres
    ```
    - El Circuit Breaker pasa a estado `Half-Open`, verifica la base de datos y se cierra (`Closed`).
-   - El Worker Pool vacía automáticamente la cola de auditoría a PostgreSQL sin pérdida de historiales.
+   - El Worker Pool vacía la cola a PostgreSQL. **No hay pérdida de historiales mientras la cola no se llene**; si se llena, el contador de descartes (visible en `/readyz`) refleja exactamente cuántos eventos se perdieron.
 
-### 5.2 Prueba B: Caída Forzada del Motor de Simulación en Rust (`kill -9`)
+### 5.2 Prueba B1: Caída Forzada del Motor de Simulación en Rust (`kill -9`)
 1. **Acción:** Terminar abruptamente el proceso del motor de juego mientras una sala está activa:
    ```bash
    kill -9 <PID_RUST_ENGINE>
    ```
 2. **Comportamiento Esperado:**
-   - Los clientes detectan el cierre del socket gRPC y entran en modo reconexión con *Exponential Backoff*.
-   - El Gateway Go detecta la ausencia de heartbeats del worker.
-   - Al reiniciar el motor de Rust (o disponer de réplica secundaria), el cliente presenta su `reconnect_ticket`.
-   - Si la reconexión ocurre dentro de los **5 segundos de gracia**, la partida continúa desde el snapshot de reconciliación sin reiniciar la sesión.
+   - Los clientes detectan el cierre del stream gRPC y muestran el mensaje "Partida interrumpida".
+   - El Gateway Go detecta la ausencia de heartbeats del worker y marca la sala como `FINISHED`.
+   - Los clientes vuelven al lobby y pueden crear una sala nueva. **La partida en curso se pierde** (la restauración desde snapshot es trabajo futuro) y el historial ya guardado no se afecta.
 
-### 5.3 Prueba C: Conmutación de Gateways (Client-Side Load Balancing)
-1. **Acción:** Detener la réplica principal de Gateway Go (`kill` a la instancia en puerto 50051).
+### 5.3 Prueba B2: Micro-corte de Red del Cliente (Reconexión con Ticket)
+1. **Acción:** Interrumpir la red de un solo cliente durante 5 segundos (por ejemplo, desconectar el Wi-Fi o bloquear el puerto con `iptables`) y restablecerla.
 2. **Comportamiento Esperado:**
-   - El cliente gRPC (Tauri o Python) utiliza su resolver interno para conmutar inmediatamente a la réplica secundaria (puerto alterno o IP flotante VIP) en menos de 1 segundo sin interrumpir al usuario.
+   - El cliente muestra "Reconectando..." y reintenta con *Exponential Backoff*.
+   - Si la reconexión ocurre dentro de los **10 segundos de gracia** (`RECONNECT_GRACE_SECONDS`), el cliente presenta su `reconnect_ticket` y recibe un snapshot de reconciliación; la partida continúa sin reiniciar la sesión.
+   - Si el corte supera los 10 segundos, el jugador es retirado de la sala.
+
+### 5.4 Prueba C: Conmutación de Gateways (Client-Side Load Balancing)
+1. **Acción:** Con dos réplicas del Gateway Go en puertos o hosts distintos (el cliente configurado con la lista de ambos endpoints), detener la réplica que está atendiendo (`kill` o `docker stop`).
+2. **Comportamiento Esperado:**
+   - El cliente gRPC (Tauri o Python) utiliza su resolver interno para conmutar a la réplica secundaria en menos de 1 segundo, sin interrumpir al usuario y sin necesidad de una IP virtual.
 
 ---
 
 ## 6. Nivel 5: Emulación de Red Degradada y Pruebas Anti-Cheat
 
-### 6.1 Simulación de Red Inestable (Latencia y Pérdida de Paquetes)
+### 6.1 Simulación de Red Inestable (Latencia y Pérdida de Paquetes) — *Opcional*
 Utilizando la utilidad de kernel de Linux `tc netem`:
 ```bash
 # Inyectar 120 ms de retardo y 5% de pérdida aleatoria de paquetes
@@ -125,24 +132,30 @@ sudo tc qdisc del dev lo root
 ```
 **Validación:**
 - El HUD de ambos clientes debe cambiar el indicador de Ping de **Verde (< 60ms)** a **Amarillo (60-150ms)** o **Rojo (> 150ms)**.
-- El algoritmo de interpolación y el margen de gracia de 5s deben evitar desconexiones accidentales por fluctuaciones normales.
+- La interpolación en el cliente y el margen de gracia de 10 s deben evitar desconexiones accidentales por fluctuaciones normales.
 
 ### 6.2 Pruebas de Servidor Autoritativo (Anti-Cheat)
-1. **Inyección de Velocidad Imposible (Speedhack):**
-   - El cliente envía un vector de movimiento que supera la velocidad máxima permitida por tick ($\Delta \text{pos} > \text{max\_speed} \times \Delta t$).
-   - **Resultado:** Rust descarta la posición enviada y obliga al cliente a mantenerse en su coordenada legítima.
+1. **Vector de Movimiento Excesivo (Speedhack):**
+   - El cliente envía un `MoveAction` con un vector de magnitud mayor a 1 (por ejemplo, `direction_x = 50`).
+   - **Resultado:** Rust normaliza el vector y limita el desplazamiento a `max_speed × Δt` por tick. El teletransporte no es posible por diseño, porque el cliente nunca envía una posición.
 2. **Reparación a Distancia:**
-   - El cliente envía una acción `RepairPipeAction` con coordenadas lejanas a la fuga (> 1.5 tiles).
+   - El cliente envía una acción `RepairPipeAction` estando a más de 1.5 tiles de la fuga.
    - **Resultado:** Rust rechaza la acción por proximidad inválida.
 3. **Manipulación de Token JWT:**
-   - El cliente envía peticiones con una firma alterada o expirada.
-   - **Resultado:** Interceptores gRPC devuelven inmediatamente código de error `UNAUTHENTICATED` (código 16 de gRPC).
+   - El cliente envía peticiones al Gateway con una firma alterada o expirada.
+   - **Resultado:** Los interceptores gRPC devuelven inmediatamente `UNAUTHENTICATED` (código 16 de gRPC).
+4. **`RoomTicket` Inválido o Expirado:**
+   - El cliente abre el stream hacia Rust con un ticket alterado, de otra sala o vencido (> 60 s).
+   - **Resultado:** Rust cierra el stream con `UNAUTHENTICATED` sin crear ninguna sala.
+5. **Flood de Acciones:**
+   - El cliente envía más acciones por segundo que el límite configurado.
+   - **Resultado:** Rust descarta el exceso sin afectar el tick de los demás jugadores.
 
 ---
 
 ## 7. Automatización en el Pipeline y Registro de Resultados
 
-Para la defensa del proyecto, los resultados de la ejecución de estas pruebas se consolidarán mediante scripts dedicados:
+Para la defensa del proyecto, los resultados de la ejecución de estas pruebas se consolidarán mediante scripts dedicados (ubicados en la rama `fase1`, no en la rama de documentación):
 - `scripts/test_contracts.py`: Ejecución de suite unitaria de contratos.
 - `scripts/test_live_grpc.py`: Ejecución de ciclo de vida en vivo.
 - `scripts/test_stress_load.py`: Lanzador masivo de bots concurrentes para captura de métricas.
