@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package ecostream.v1;
+
+option go_package = "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1;ecostreamv1";
+
+import "ecostream/v1/matchmaking.proto";
+import "ecostream/v1/gameplay.proto";
+
+// Servicio interno de coordinación entre Gateway (Go) y Simulación (Rust)
+service InternalCoordinatorService {
+  // Go solicita a Rust crear/alojar una instancia de sala de simulación
+  rpc ProvisionRoom(ProvisionRoomRequest) returns (ProvisionRoomResponse);
+
+  // Rust notifica a Go que una partida finalizó con sus resultados finales
+  rpc NotifyMatchFinished(NotifyMatchFinishedRequest) returns (NotifyMatchFinishedResponse);
+}
+
+message ProvisionRoomRequest {
+  string room_id = 1;
+  string room_code = 2;
+  uint32 difficulty_level = 3;
+  uint32 max_players = 4;
+  repeated PlayerSlot players = 5;
+}
+
+message ProvisionRoomResponse {
+  bool success = 1;
+  string message = 2;
+  string simulation_endpoint = 3;
+}
+
+message NotifyMatchFinishedRequest {
+  string room_id = 1;
+  MatchEndEvent final_state = 2;
+}
+
+message NotifyMatchFinishedResponse {
+  bool acknowledged = 1;
+  string message = 2;
+}
