@@ -88,6 +88,7 @@ func main() {
 			matchmakingService.ListRoomsHandler(w, r)
 		}
 	})
+	mux.HandleFunc("/api/v1/rooms/join", matchmakingService.JoinRoomHandler)
 
 	// 6. Servidor HTTP
 	server := &http.Server{

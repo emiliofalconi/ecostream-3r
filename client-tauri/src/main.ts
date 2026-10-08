@@ -651,3 +651,240 @@ function gameLoop() {
 // Iniciar Loop
 requestAnimationFrame(gameLoop);
 updateHUD();
+
+// ==========================================================================
+// INTEGRACIÓN CON GO GATEWAY (API REST & MATCHMAKING)
+// ==========================================================================
+const GATEWAY_BASE = 'http://localhost:8080';
+
+const session = {
+  token: '',
+  username: 'Guardián_1',
+  role: 4,
+  roomCode: '',
+  roomId: '',
+  roomTicket: '',
+  isOnline: false,
+};
+
+// Elementos DOM del Lobby
+const lobbyModal = document.getElementById('lobbyModal');
+const btnOpenLobby = document.getElementById('btnOpenLobby');
+const btnCloseLobby = document.getElementById('btnCloseLobby');
+const gatewayStatusDot = document.getElementById('gatewayStatusDot');
+const gatewayStatusText = document.getElementById('gatewayStatusText');
+const inputUsername = document.getElementById('inputUsername') as HTMLInputElement | null;
+const selectRole = document.getElementById('selectRole') as HTMLSelectElement | null;
+const btnCreateRoomGo = document.getElementById('btnCreateRoomGo');
+const inputRoomCode = document.getElementById('inputRoomCode') as HTMLInputElement | null;
+const btnJoinRoomGo = document.getElementById('btnJoinRoomGo');
+const btnRefreshRooms = document.getElementById('btnRefreshRooms');
+const roomsListContainer = document.getElementById('roomsListContainer');
+const roomDot = document.getElementById('roomDot');
+const txtRoomCode = document.getElementById('txtRoomCode');
+
+function toggleLobby(show: boolean) {
+  if (!lobbyModal) return;
+  if (show) {
+    lobbyModal.classList.remove('hidden');
+    checkGatewayHealth();
+    fetchRoomsList();
+  } else {
+    lobbyModal.classList.add('hidden');
+  }
+}
+
+btnOpenLobby?.addEventListener('click', () => toggleLobby(true));
+btnCloseLobby?.addEventListener('click', () => toggleLobby(false));
+
+// Verificar Salud del Gateway Go (/healthz)
+async function checkGatewayHealth() {
+  try {
+    const res = await fetch(`${GATEWAY_BASE}/healthz`, { method: 'GET' });
+    if (res.ok) {
+      session.isOnline = true;
+      if (gatewayStatusDot) {
+        gatewayStatusDot.className = 'status-indicator online';
+      }
+      if (gatewayStatusText) {
+        gatewayStatusText.textContent = '🟢 Go Gateway Online (:8080) - Matchmaking Listo';
+      }
+    } else {
+      throw new Error('Status no OK');
+    }
+  } catch (e) {
+    session.isOnline = false;
+    if (gatewayStatusDot) {
+      gatewayStatusDot.className = 'status-indicator offline';
+    }
+    if (gatewayStatusText) {
+      gatewayStatusText.textContent = '🔴 Go Gateway Desconectado. (Inicia el servidor en :8080)';
+    }
+  }
+}
+
+// Obtener o Generar Token JWT de Sesión
+async function getOrFetchToken(): Promise<string> {
+  const username = inputUsername?.value.trim() || 'Guardián_1';
+  session.username = username;
+  session.role = parseInt(selectRole?.value || '4');
+
+  try {
+    const loginRes = await fetch(`${GATEWAY_BASE}/api/v1/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        username_or_email: username,
+        password: 'password123',
+      }),
+    });
+
+    if (loginRes.ok) {
+      const data = await loginRes.json();
+      if (data.token) {
+        session.token = data.token;
+        return data.token;
+      }
+    }
+  } catch (err) {
+    console.warn('[GATEWAY] Modo local / fallback para token:', err);
+  }
+
+  if (!session.token) {
+    session.token = 'mock_jwt_token_' + btoa(username) + '_' + Date.now();
+  }
+  return session.token;
+}
+
+// Crear Sala en Go Gateway (POST /api/v1/rooms)
+async function handleCreateRoom() {
+  const token = await getOrFetchToken();
+  const roomName = `Sala Eco de ${session.username}`;
+
+  try {
+    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: token,
+        room_name: roomName,
+        selected_role: session.role,
+        max_players: 4,
+        difficulty_level: 1,
+      }),
+    });
+
+    const data = await res.json();
+    if (data.success && data.room) {
+      session.roomCode = data.room.room_code;
+      session.roomId = data.room.room_id || '';
+      session.roomTicket = data.room_ticket || '';
+
+      updateRoomUI(session.roomCode);
+      showToast(`¡Sala creada! Código: ${session.roomCode}`, 'reuse');
+      toggleLobby(false);
+    } else {
+      showToast(data.message || 'Error creando sala', 'reduce');
+    }
+  } catch (err) {
+    console.error('Error creando sala:', err);
+    session.roomCode = 'AGUA-LOC1';
+    updateRoomUI(session.roomCode);
+    showToast('Sala creada en modo local: AGUA-LOC1', 'reuse');
+    toggleLobby(false);
+  }
+}
+
+// Unirse a Sala por Código en Go Gateway (POST /api/v1/rooms/join)
+async function handleJoinRoom() {
+  const code = inputRoomCode?.value.trim().toUpperCase();
+  if (!code) {
+    showToast('Ingresa un código de sala (ej: AGUA-12AB)', 'reduce');
+    return;
+  }
+
+  const token = await getOrFetchToken();
+
+  try {
+    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms/join`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        token: token,
+        room_code: code,
+        selected_role: session.role,
+      }),
+    });
+
+    const data = await res.json();
+    if (data.success && data.room) {
+      session.roomCode = data.room.room_code || code;
+      session.roomTicket = data.room_ticket || '';
+      updateRoomUI(session.roomCode);
+      showToast(`¡Unido con éxito a la sala ${session.roomCode}!`, 'reuse');
+      toggleLobby(false);
+    } else {
+      showToast(data.message || 'No se pudo unir a la sala', 'reduce');
+    }
+  } catch (err) {
+    console.error('Error uniéndose a la sala:', err);
+    session.roomCode = code;
+    updateRoomUI(session.roomCode);
+    showToast(`Unido a la sala local: ${code}`, 'reuse');
+    toggleLobby(false);
+  }
+}
+
+// Consultar Lista de Salas Activas (GET /api/v1/rooms)
+async function fetchRoomsList() {
+  if (!roomsListContainer) return;
+  roomsListContainer.innerHTML = '<div class="room-empty">Consultando salas activas...</div>';
+
+  try {
+    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms`, { method: 'GET' });
+    const data = await res.json();
+
+    if (data.success && data.rooms && data.rooms.length > 0) {
+      roomsListContainer.innerHTML = '';
+      data.rooms.forEach((r: any) => {
+        const item = document.createElement('div');
+        item.className = 'room-item';
+        item.innerHTML = `
+          <div>
+            <span class="room-code-tag">${r.room_code}</span>
+            <span style="margin-left: 8px; color: #cbd5e1;">${r.room_name}</span>
+          </div>
+          <button class="btn-secondary join-quick-btn" data-code="${r.room_code}">Entrar</button>
+        `;
+        roomsListContainer.appendChild(item);
+      });
+
+      document.querySelectorAll('.join-quick-btn').forEach((btn) => {
+        btn.addEventListener('click', (e) => {
+          const target = e.currentTarget as HTMLElement;
+          const code = target.getAttribute('data-code');
+          if (code && inputRoomCode) {
+            inputRoomCode.value = code;
+            handleJoinRoom();
+          }
+        });
+      });
+    } else {
+      roomsListContainer.innerHTML = '<div class="room-empty">No hay salas abiertas en este momento. ¡Crea una!</div>';
+    }
+  } catch (err) {
+    roomsListContainer.innerHTML = '<div class="room-empty" style="color: #f87171;">No se pudo conectar con Go Gateway (:8080)</div>';
+  }
+}
+
+function updateRoomUI(code: string) {
+  if (txtRoomCode) txtRoomCode.textContent = `Sala: ${code}`;
+  if (roomDot) roomDot.className = 'room-dot connected';
+}
+
+btnCreateRoomGo?.addEventListener('click', handleCreateRoom);
+btnJoinRoomGo?.addEventListener('click', handleJoinRoom);
+btnRefreshRooms?.addEventListener('click', fetchRoomsList);
+
+setTimeout(checkGatewayHealth, 1000);
+

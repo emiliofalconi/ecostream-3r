@@ -69,6 +69,13 @@
       </div>
 
       <div class="hud-controls">
+        <div id="roomBadge" class="room-badge" title="Sala y Conexión Go Gateway">
+          <span class="room-dot" id="roomDot"></span>
+          <span id="txtRoomCode">Sin Sala</span>
+        </div>
+        <button id="btnOpenLobby" class="lobby-trigger-btn" title="Gestionar Salas (Go Gateway)">
+          🌐 Salas Go
+        </button>
         <div id="rttWidget" class="rtt-widget" title="Telemetría de Latencia en Vivo">
           <div class="rtt-dot"></div>
           <span id="txtPing">2 ms</span>
@@ -123,6 +130,71 @@
       </button>
     </div>
   </main>
+
+  <!-- MODAL DE MATCHMAKING Y CONEXIÓN CON GO GATEWAY -->
+  <div id="lobbyModal" class="lobby-overlay hidden">
+    <div class="lobby-card">
+      <div class="lobby-header">
+        <div class="lobby-title-row">
+          <span class="lobby-icon">🌐</span>
+          <h2>Lobby Multijugador (Go Gateway)</h2>
+        </div>
+        <button id="btnCloseLobby" class="lobby-close-btn">&times;</button>
+      </div>
+
+      <div class="lobby-status-bar">
+        <span class="status-indicator" id="gatewayStatusDot"></span>
+        <span id="gatewayStatusText">Comprobando conexión con Go Gateway (:8080)...</span>
+      </div>
+
+      <div class="lobby-grid">
+        <!-- SECCIÓN 1: PERFIL DEL JUGADOR -->
+        <div class="lobby-section">
+          <h3>👤 Tu Identidad</h3>
+          <div class="form-group">
+            <label for="inputUsername">Nombre de Jugador:</label>
+            <input type="text" id="inputUsername" placeholder="Ej: AquaGuardian1" value="Guardián_1">
+          </div>
+          <div class="form-group">
+            <label for="selectRole">Rol Especializado 3R:</label>
+            <select id="selectRole">
+              <option value="1">🔧 Fontanero (1. Reducir)</option>
+              <option value="2">🌱 Ing. Hidráulico (2. Reusar)</option>
+              <option value="3">⚗️ Químico Ambiental (3. Reciclar)</option>
+              <option value="4" selected>💧 Guardián General</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- SECCIÓN 2: ACCIONES DE MATCHMAKING -->
+        <div class="lobby-section">
+          <h3>🎮 Acciones de Sala</h3>
+          <div class="lobby-actions-row">
+            <button id="btnCreateRoomGo" class="btn-primary">
+              ➕ Crear Sala Nueva
+            </button>
+          </div>
+          <div class="join-input-group">
+            <input type="text" id="inputRoomCode" placeholder="Código (ej: AGUA-89BC)" style="text-transform: uppercase;">
+            <button id="btnJoinRoomGo" class="btn-secondary">
+              🚪 Unirse
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 3: LISTA DE SALAS DISPONIBLES EN GO -->
+      <div class="lobby-section" style="margin-top: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3>📋 Salas Abiertas en Go Gateway</h3>
+          <button id="btnRefreshRooms" class="btn-refresh">🔄 Actualizar</button>
+        </div>
+        <div id="roomsListContainer" class="rooms-list">
+          <div class="room-empty">Presiona "Actualizar" o "Crear Sala" para comenzar...</div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>

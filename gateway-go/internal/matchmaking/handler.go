@@ -79,6 +79,25 @@ func (s *Service) CreateRoomHandler(w http.ResponseWriter, r *http.Request) {
 	roomCode := generateRoomCode()
 	var roomID string
 
+	if s.db == nil {
+		roomTicket := fmt.Sprintf("tkt_mock_%s_%d", claims.UserID, time.Now().Unix())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Sala creada exitosamente (modo local/mock)",
+			"room": map[string]interface{}{
+				"room_id":             "rm_mock_01",
+				"room_code":           roomCode,
+				"room_name":           req.RoomName,
+				"status":              1,
+				"max_players":         req.MaxPlayers,
+				"simulation_endpoint": s.defaultSim,
+			},
+			"room_ticket": roomTicket,
+		})
+		return
+	}
+
 	query := `INSERT INTO rooms (room_code, room_name, host_user_id, status, max_players, difficulty_level, simulation_endpoint)
 	          VALUES ($1, $2, $3, 1, $4, $5, $6)
 	          RETURNING id`
@@ -110,9 +129,118 @@ func (s *Service) CreateRoomHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Service) JoinRoomHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Metodo no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req JoinRoomReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "JSON invalido", http.StatusBadRequest)
+		return
+	}
+
+	claims, err := s.authService.ValidateToken(req.Token)
+	if err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Token JWT invalido"})
+		return
+	}
+
+	if s.db == nil {
+		roomTicket := fmt.Sprintf("tkt_mock_%s_%d", claims.UserID, time.Now().Unix())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"message": "Unido a la sala exitosamente (modo local/mock)",
+			"room": map[string]interface{}{
+				"room_code":           req.RoomCode,
+				"simulation_endpoint": s.defaultSim,
+			},
+			"room_ticket": roomTicket,
+		})
+		return
+	}
+
+	var roomID, roomName, simEndpoint string
+	var status, maxPlayers int
+
+	query := `SELECT id, room_name, status, max_players, simulation_endpoint
+	          FROM rooms
+	          WHERE room_code = $1 AND status IN (1, 2)`
+	err = s.db.QueryRow(query, req.RoomCode).Scan(&roomID, &roomName, &status, &maxPlayers, &simEndpoint)
+	if err == sql.ErrNoRows {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "Sala no encontrada o partida ya finalizada"})
+		return
+	} else if err != nil {
+		http.Error(w, fmt.Sprintf("Error buscando sala: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Verificar si la sala ya esta llena
+	var currentPlayers int
+	err = s.db.QueryRow(`SELECT COUNT(*) FROM room_players WHERE room_id = $1`, roomID).Scan(&currentPlayers)
+	if err == nil && currentPlayers >= maxPlayers {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]interface{}{"success": false, "message": "La sala ya alcanzo el maximo de jugadores"})
+		return
+	}
+
+	// Registrar o actualizar jugador en la sala
+	_, err = s.db.Exec(`INSERT INTO room_players (room_id, user_id, selected_role, is_host, is_ready)
+	                  VALUES ($1, $2, $3, FALSE, TRUE)
+	                  ON CONFLICT (room_id, user_id) DO UPDATE SET selected_role = $3, is_ready = TRUE`,
+		roomID, claims.UserID, req.SelectedRole)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Error uniendo a sala: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	roomTicket := fmt.Sprintf("tkt_%s_%s_%d", roomID, claims.UserID, time.Now().Unix())
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true,
+		"message": "Unido a la sala exitosamente",
+		"room": map[string]interface{}{
+			"room_id":             roomID,
+			"room_code":           req.RoomCode,
+			"room_name":           roomName,
+			"status":              status,
+			"max_players":         maxPlayers,
+			"simulation_endpoint": simEndpoint,
+		},
+		"room_ticket": roomTicket,
+	})
+}
+
 func (s *Service) ListRoomsHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Metodo no permitido", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.db == nil {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"rooms": []map[string]interface{}{
+				{
+					"room_id":             "rm_mock_01",
+					"room_code":           "AGUA-DEMO",
+					"room_name":           "Sala Demo Local",
+					"status":              1,
+					"max_players":         4,
+					"difficulty_level":    1,
+					"simulation_endpoint": s.defaultSim,
+				},
+			},
+		})
 		return
 	}
 
