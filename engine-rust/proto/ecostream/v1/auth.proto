@@ -1,0 +1,76 @@
+syntax = "proto3";
+
+package ecostream.v1;
+
+option go_package = "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1;ecostreamv1";
+
+import "ecostream/v1/common.proto";
+
+// Servicio de Autenticación y Control de Identidad
+service AuthService {
+  rpc Register(RegisterRequest) returns (RegisterResponse);
+  rpc Login(LoginRequest) returns (LoginResponse);
+  rpc VerifyToken(VerifyTokenRequest) returns (VerifyTokenResponse);
+  rpc GetProfile(GetProfileRequest) returns (GetProfileResponse);
+}
+
+message UserProfile {
+  string user_id = 1;
+  string username = 2;
+  string email = 3;
+  PlayerRole default_role = 4;
+  uint32 games_played = 5;
+  uint32 games_won = 6;
+  float total_eco_score = 7;
+  string created_at = 8;
+}
+
+message RegisterRequest {
+  string username = 1;
+  string email = 2;
+  string password = 3;
+  PlayerRole default_role = 4;
+}
+
+message RegisterResponse {
+  bool success = 1;
+  string message = 2;
+  string token = 3;
+  UserProfile user = 4;
+  int64 expires_at_unix = 5;
+}
+
+message LoginRequest {
+  string username_or_email = 1;
+  string password = 2;
+}
+
+message LoginResponse {
+  bool success = 1;
+  string message = 2;
+  string token = 3;
+  UserProfile user = 4;
+  int64 expires_at_unix = 5;
+}
+
+message VerifyTokenRequest {
+  string token = 1;
+}
+
+message VerifyTokenResponse {
+  bool valid = 1;
+  string user_id = 2;
+  string username = 3;
+  PlayerRole role = 4;
+  string message = 5;
+}
+
+message GetProfileRequest {
+  string user_id = 1;
+}
+
+message GetProfileResponse {
+  bool success = 1;
+  UserProfile user = 2;
+  string error = 3;
+}
