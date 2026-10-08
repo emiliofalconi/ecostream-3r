@@ -22,7 +22,8 @@ El juego incluye además un sistema de **chat multijugador en tiempo real** inte
 
 | Capa | Tecnología | Justificación y Responsabilidad |
 | :--- | :--- | :--- |
-| **Persistencia** | **PostgreSQL 16** | Modelo relacional para cuentas de usuario, historial de partidas, métricas y consistencia transaccional ACID. |
+| **Persistencia** | **PostgreSQL 16** | Modelo relacional para cuentas de usuario, historial de partidas, métricas y consistencia transaccional ACID. Fuente de verdad. |
+| **Caché** | **Redis** | Únicamente caché de salas activas (patrón Cache-Aside). Si cae, el Gateway consulta PostgreSQL. |
 | **Control Plane & Gateway** | **Go 1.22+** | Autenticación JWT, Matchmaking, Worker Pools con **Goroutines**, endpoints de salud (`/healthz`, `/readyz`), documentación OpenAPI/Swagger interactiva y disyuntores (*Circuit Breakers*). |
 | **Data Plane & Simulación** | **Rust (Tokio / Tonic)** | Bucle de simulación física autoritativo a **20 Ticks/segundo**, gestión de memoria libre de Garbage Collector y streaming bidireccional gRPC de ultra-baja latencia. |
 | **Cliente 1 (Escritorio / UI)** | **Tauri (TypeScript + Vite)** | Interfaz gráfica de escritorio con estética Pixel Art 2D sobre Canvas y conexión directa gRPC HTTP/2 nativa sin sobrecarga de proxies. |
@@ -38,7 +39,7 @@ El sistema incorpora al menos 5 patrones canónicos de arquitectura en la nube:
 2. **Circuit Breaker (Disyuntor):** Prevención de fallos en cascada ante caídas transitorias de PostgreSQL o workers de Rust.
 3. **Health Endpoint Monitoring:** Cumplimiento de estándares de sondeo de vitalidad y disponibilidad (`grpc.health.v1.Health` y `/healthz`, `/readyz`).
 4. **Authoritative Server Pattern:** Eliminación de trampas y desincronizaciones calculando el estado del mundo enteramente en Rust.
-5. **Cache-Aside / Materialized State:** Desacoplamiento entre memoria volátil de lobbies rápidos y persistencia en disco de PostgreSQL.
+5. **Cache-Aside:** Caché de salas activas en Redis (con TTL); si Redis no responde, el Gateway consulta PostgreSQL, que es la fuente de verdad.
 
 ---
 
@@ -60,19 +61,24 @@ Se ha elaborado una guía completa con **prompts optimizados para modelos de gen
 ## 📚 Documentación Técnica Detallada
 
 Para consultar la planificación técnica exhaustiva, visita el directorio `docs/`:
-- [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, tolerancia a fallos Zero-SPOF, concurrencia en Go con Goroutines, seguridad mTLS/JWT y despliegue (LAN vs Nube).
-- [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Documento de diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
-- [docs/ARQUITECTURA_FLUJOS_Y_UML.md](docs/ARQUITECTURA_FLUJOS_Y_UML.md): Especificación detallada de flujos, balanceo de carga, detección de fallos y guía exhaustiva de diagramas UML.
-- [docs/PLAN_DE_PRUEBAS.md](docs/PLAN_DE_PRUEBAS.md): Plan maestro de pruebas de carga, caos, resiliencia ante fallos, emulación de red y validación anti-cheat.
+- [docs/ALCANCE_Y_DECISIONES.md](docs/ALCANCE_Y_DECISIONES.md): **Empezar aquí.** Alcance del proyecto (núcleo / deseable / trabajo futuro), registro de decisiones, constantes únicas y desviaciones conocidas respecto a `fase1`.
+- [docs/ARQUITECTURA_Y_PLANIFICACION.md](docs/ARQUITECTURA_Y_PLANIFICACION.md): Documento integral de infraestructura, alta disponibilidad en la entrada, concurrencia en Go con Goroutines, seguridad JWT/TLS y despliegue (LAN vs Nube).
+- [docs/ARQUITECTURA_FLUJOS_Y_UML.md](docs/ARQUITECTURA_FLUJOS_Y_UML.md): Especificación detallada de flujos, balanceo de carga, detección de fallos y guía de diagramas UML.
+- [docs/GATEWAYS_REDUNDANTES_Y_COMUNICACION.md](docs/GATEWAYS_REDUNDANTES_Y_COMUNICACION.md): Cómo funcionan dos gateways en equipos distintos y cómo el cliente llega a uno de ellos.
+- [docs/DISENO_DEL_JUEGO.md](docs/DISENO_DEL_JUEGO.md): Diseño de mecánicas, balance hídrico, eventos climáticos y contratos gRPC preliminares.
+- [docs/SEGURIDAD.md](docs/SEGURIDAD.md): Riesgos de seguridad e integridad que se mitigan (y cuáles quedan como trabajo futuro).
+- [docs/PLAN_DE_PRUEBAS.md](docs/PLAN_DE_PRUEBAS.md): Plan de pruebas de contratos, carga, caos, resiliencia y anti-cheat.
 
 ---
 
 ## 🚀 Hoja de Ruta de Desarrollo
 
+> Esta rama (`Side-dev`) contiene **solo documentación**. La implementación vive en la rama `fase1`; los puntos donde aún no cumple el diseño están en [docs/ALCANCE_Y_DECISIONES.md](docs/ALCANCE_Y_DECISIONES.md#4-desviaciones-conocidas-respecto-a-la-rama-fase1).
+
 - [x] **Fase 0: Planificación y Arquitectura de Nube**
   - [x] Definición conceptual de las 3R para preservación de agua.
   - [x] Selección e integración de tecnologías (Postgres, Go, Rust, TypeScript/Tauri, Python).
-  - [x] Estrategia de tolerancia a fallos y eliminación de SPOF en el Gateway.
+  - [x] Eliminación del SPOF en la entrada (≥ 2 gateways con balanceo del lado del cliente) y definición del alcance de tolerancia a fallos.
   - [x] Justificación técnica de Goroutines y selección de los 5 patrones cloud-native.
   - [ ] Generación y consolidación de assets y tileset Pixel Art 2D.
 - [ ] **Fase 1: Contratos de Comunicación (Protocol Buffers)**
