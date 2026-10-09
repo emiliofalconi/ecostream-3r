@@ -188,8 +188,23 @@ python scripts/test_live_grpc.py
 ```
 * **Resultado Esperado:**
   * Login simulado exitoso con token JWT generado.
-  * Sala creada con ticket de emparejamiento.
-  * Streaming continuo a 20 Hz con latencia RTT calculada (~1-3 ms en local).
+---
+
+### C. Pruebas de Estrés Masivas (100+ Bots Concurrentes)
+Ejecuta la suite de pruebas de carga y estrés con **100+ agentes autónomos headless** distribuidos concurrentemente en múltiples salas a 20 Hz, midiendo throughput de red, latencia P95/P99 y acciones ecológicas 3R:
+
+```powershell
+# Ejecución autónoma con Servidor Mock gRPC de alta concurrencia
+python client-python/stress_test_bots.py --mock --bots 100 --duration 15 --ramp-up 2.0
+
+# O ejecución contra el Motor Rust / Nube en producción
+python client-python/stress_test_bots.py --host localhost:50052 --bots 100 --duration 30
+```
+
+* **Salida y Reporte:**
+  * Telemetría en vivo en consola (Tx/Rx pkts/s, latencia RTT promedio, fugas reparadas, % de error).
+  * Reporte técnico generado automáticamente en Markdown: [`docs/REPORTE_PRUEBAS_ESTRES_100_BOTS.md`](REPORTE_PRUEBAS_ESTRES_100_BOTS.md).
+  * Datos crudos de telemetría en JSON: [`docs/stress_test_results.json`](stress_test_results.json).
 
 ---
 
@@ -197,7 +212,8 @@ python scripts/test_live_grpc.py
 
 | Archivo / Script | Ruta | Descripción | Comando |
 | :--- | :--- | :--- | :--- |
-| **`main_game.py`** | [`client-python/main_game.py`](../client-python/main_game.py) | Cliente de juego Pygame con soporte interactivo y flag `--bot`. | `python client-python/main_game.py [--bot]` |
+| **`stress_test_bots.py`** | [`client-python/stress_test_bots.py`](../client-python/stress_test_bots.py) | Suite de pruebas de carga masiva (100+ bots headless concurrentes a 20 Hz con métricas P50/P95/P99). | `python client-python/stress_test_bots.py [--mock] [--bots 100]` |
+| **`main_game.py`** | [`client-python/main_game.py`](../client-python/main_game.py) | Cliente de juego Pygame con soporte interactivo, modo `--bot` y modo `--headless`. | `python client-python/main_game.py [--bot] [--headless]` |
 | **`build_protos.py`** | [`scripts/build_protos.py`](../scripts/build_protos.py) | Compilador automatizado de Protocol Buffers que genera stubs de Python y sincroniza definiciones para Rust. | `python scripts/build_protos.py` |
 | **`test_contracts.py`** | [`scripts/test_contracts.py`](../scripts/test_contracts.py) | Suite de pruebas de contratos gRPC y serialización binaria 3R. | `python scripts/test_contracts.py` |
 | **`test_live_grpc.py`** | [`scripts/test_live_grpc.py`](../scripts/test_live_grpc.py) | Prueba de integración de streaming a 20 Hz y RTT en vivo. | `python scripts/test_live_grpc.py` |

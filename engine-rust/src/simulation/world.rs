@@ -28,6 +28,8 @@ pub struct GameRoomSimulation {
     // Resiliencia: Mapa de tickets de sesión para reconexión (< 5s) (agregado por Victor)
     pub session_tickets: HashMap<String, String>, // player_id -> reconnect_ticket
     pub last_snapshot: Option<GameWorldState>,
+    pub is_match_ended: bool,
+    pub match_end_event: Option<MatchEndEvent>,
 }
 
 impl GameRoomSimulation {
@@ -107,27 +109,64 @@ impl GameRoomSimulation {
             active_events: Vec::new(),
             session_tickets: HashMap::new(),
             last_snapshot: None,
+            is_match_ended: false,
+            match_end_event: None,
         }
     }
 
-    /// Registrar o actualizar jugador en la sala
+    /// Registrar o actualizar jugador en la sala (soporta reconexión)
     pub fn upsert_player(&mut self, player_id: String, username: String, role: i32) -> String {
         let ticket = format!("tkt_reconn_{}_{}", player_id, self.tick);
         self.session_tickets.insert(player_id.clone(), ticket.clone());
 
-        self.players.entry(player_id.clone()).or_insert_with(|| PlayerEntityState {
-            player_id,
-            username,
-            role,
-            position: Some(Vector2D { x: 20.0, y: 20.0 }),
-            velocity: Some(Vector2D { x: 0.0, y: 0.0 }),
-            is_interacting: false,
-            current_score: 0,
-            is_connected: true,
-            carrying_item: "wrench".to_string(),
-        });
+        if let Some(existing) = self.players.get_mut(&player_id) {
+            existing.is_connected = true;
+        } else {
+            self.players.insert(player_id.clone(), PlayerEntityState {
+                player_id,
+                username,
+                role,
+                position: Some(Vector2D { x: 20.0, y: 20.0 }),
+                velocity: Some(Vector2D { x: 0.0, y: 0.0 }),
+                is_interacting: false,
+                current_score: 0,
+                is_connected: true,
+                carrying_item: "wrench".to_string(),
+            });
+        }
 
         ticket
+    }
+
+    /// Marcar jugador como desconectado de forma autoritativa
+    pub fn disconnect_player(&mut self, player_id: &str) {
+        if let Some(player) = self.players.get_mut(player_id) {
+            player.is_connected = false;
+            println!("[SIMULATION] Jugador {} marcado como desconectado en sala {}", player_id, self.room_id);
+        }
+    }
+
+    /// Construir el estado actual sin mutar ticks
+    pub fn build_current_state(&self) -> GameWorldState {
+        let metrics = WaterMetrics {
+            reservoir_level_pct: (self.reservoir_level_pct * 100.0).round() / 100.0,
+            water_purity_pct: (self.water_purity_pct * 100.0).round() / 100.0,
+            total_liters_saved: self.total_liters_saved,
+            total_liters_reused: self.total_liters_reused,
+            total_liters_recycled: self.total_liters_recycled,
+        };
+
+        GameWorldState {
+            tick: self.tick,
+            water_metrics: Some(metrics),
+            team_score: self.team_score,
+            remaining_seconds: self.remaining_seconds,
+            players: self.players.values().cloned().collect(),
+            pipes: self.pipes.clone(),
+            valves: self.valves.clone(),
+            plants: self.plants.clone(),
+            active_events: self.active_events.clone(),
+        }
     }
 
     /// Distancia euclidiana entre dos puntos 2D
@@ -164,12 +203,18 @@ impl GameRoomSimulation {
                         if pipe.repair_progress_pct >= 100.0 && pipe.is_leaking {
                             pipe.is_leaking = false;
                             pipe.leak_rate_liters_sec = 0.0;
-                            self.total_liters_saved += 75.0;
-                            self.team_score += 150;
-                            if let Some(p) = self.players.get_mut(player_id) {
-                                p.current_score += 150;
+                            let mut earned_score = 150;
+                            // Bonus climático por contingencia si hay Ola de Calor activa
+                            if self.active_events.iter().any(|e| e.event_type == active_event::EventType::Heatwave as i32) {
+                                earned_score += 50;
+                                println!("[BONUS ECO] ¡Reparación heroica bajo Ola de Calor! +50 pts extra");
                             }
-                            println!("[SIMULATION] Tubería #{} sellada por jugador {}", repair.pipe_id, player_id);
+                            self.total_liters_saved += 75.0;
+                            self.team_score += earned_score;
+                            if let Some(p) = self.players.get_mut(player_id) {
+                                p.current_score += earned_score;
+                            }
+                            println!("[SIMULATION] Tubería #{} sellada por jugador {} (+{} pts)", repair.pipe_id, player_id, earned_score);
                         }
                     }
                 }
@@ -240,7 +285,11 @@ impl GameRoomSimulation {
     }
 
     /// Actualización del Bucle Autoritativo (Llamado cada 50ms = 20 Ticks/seg)
-    pub fn update_tick(&mut self) -> GameWorldState {
+    pub fn update_tick(&mut self) -> (GameWorldState, Option<MatchEndEvent>) {
+        if self.is_match_ended {
+            return (self.build_current_state(), None);
+        }
+
         self.tick += 1;
 
         // ----------------------------------------------------------------------
@@ -255,20 +304,20 @@ impl GameRoomSimulation {
                     event_id: 101,
                     event_type: active_event::EventType::Heatwave as i32,
                     title: "🔥 ¡OLA DE CALOR SEVERA!".to_string(),
-                    description: "La demanda de agua comunal se duplica por 20 segundos. ¡Racionen y reparen fugas!".to_string(),
-                    remaining_seconds: 20,
-                    severity_multiplier: 2.2,
+                    description: "La demanda de agua comunal aumenta x1.85 por 18 segundos. ¡Racionen y sellen fugas!".to_string(),
+                    remaining_seconds: 18,
+                    severity_multiplier: 1.85,
                 });
-                println!("[CLIMA EVENTO] ¡Inició OLA DE CALOR en la sala {}! Drenaje x2.2", self.room_id);
+                println!("[CLIMA EVENTO] ¡Inició OLA DE CALOR en la sala {}! Drenaje x1.85", self.room_id);
             } else {
                 // Evento: LLUVIA TORRENCIAL Y CAPTACIÓN
                 self.active_events.push(ActiveEvent {
                     event_id: 102,
                     event_type: active_event::EventType::RainHarvest as i32,
                     title: "🌧️ ¡LLUVIA TORRENCIAL ECO!".to_string(),
-                    description: "Captación de agua de lluvia activa. El embalse recupera volumen durante 15 segundos.".to_string(),
+                    description: "Captación pluvial activa. El embalse recupera volumen durante 15 segundos.".to_string(),
                     remaining_seconds: 15,
-                    severity_multiplier: 1.5,
+                    severity_multiplier: 1.6,
                 });
                 println!("[CLIMA EVENTO] ¡Inició LLUVIA TORRENCIAL en la sala {}!", self.room_id);
             }
@@ -288,9 +337,9 @@ impl GameRoomSimulation {
 
         for ev in &self.active_events {
             if ev.event_type == active_event::EventType::Heatwave as i32 {
-                climate_drain_multiplier = ev.severity_multiplier; // Duplica consumo
+                climate_drain_multiplier = ev.severity_multiplier;
             } else if ev.event_type == active_event::EventType::RainHarvest as i32 {
-                rain_inflow = 0.035 * ev.severity_multiplier; // Recarga embalse
+                rain_inflow = 0.040 * ev.severity_multiplier; // Recarga optimizada del embalse
             }
         }
 
@@ -304,20 +353,21 @@ impl GameRoomSimulation {
             }
         }
 
-        let base_drainage = 0.005 + (total_leak_rate * 0.001);
+        // Drenaje base calibrado (0.0035 consumo normal + fugas activas)
+        let base_drainage = 0.0035 + (total_leak_rate * 0.0009);
         let effective_drainage = base_drainage * climate_drain_multiplier;
 
         // Nivel del embalse: Drenaje + Aportes de lluvia
         self.reservoir_level_pct = ((self.reservoir_level_pct - effective_drainage) + rain_inflow)
             .clamp(0.0, 100.0);
 
-        // Generar fuga aleatoria cada 200 ticks (~10 seg) si no hay demasiadas
-        if self.tick % 200 == 0 {
+        // Generar fuga aleatoria cada 260 ticks (~13 seg) si hay tuberías sanas
+        if self.tick % 260 == 0 {
             if let Some(pipe) = self.pipes.iter_mut().find(|p| !p.is_leaking) {
                 pipe.is_leaking = true;
-                pipe.leak_rate_liters_sec = 6.0;
+                pipe.leak_rate_liters_sec = 6.5;
                 pipe.repair_progress_pct = 0.0;
-                println!("[SIMULATION] ¡Nueva fuga aleatoria detectada en Tubería #{}!", pipe.pipe_id);
+                println!("[SIMULATION] ¡Nueva fuga aleatoria detectada en Tubería #{}! Presión: {:.1} bar", pipe.pipe_id, pipe.water_pressure_bar);
             }
         }
 
@@ -335,6 +385,38 @@ impl GameRoomSimulation {
         let elapsed = self.start_time.elapsed().as_secs() as u32;
         self.remaining_seconds = self.match_duration_seconds.saturating_sub(elapsed);
 
+        // ----------------------------------------------------------------------
+        // 4. EVALUACIÓN AUTORITATIVA DE FIN DE PARTIDA (Victoria / Derrota)
+        // ----------------------------------------------------------------------
+        let mut new_end_event = None;
+        if self.reservoir_level_pct <= 0.0 {
+            self.is_match_ended = true;
+            let end = MatchEndEvent {
+                is_victory: false,
+                reason: "¡Sequía Crítica! El nivel del embalse se ha agotado por completo.".to_string(),
+                final_score: self.team_score,
+                final_metrics: Some(metrics.clone()),
+            };
+            self.match_end_event = Some(end.clone());
+            new_end_event = Some(end);
+            println!("[SIMULATION MATCH END] 💀 Derrota en sala {}: Sequía crítica.", self.room_id);
+        } else if self.remaining_seconds == 0 {
+            self.is_match_ended = true;
+            // Bonificación final por sostenibilidad del embalse remanente
+            let sustainability_bonus = (self.reservoir_level_pct * 5.0) as u32;
+            self.team_score += sustainability_bonus;
+
+            let end = MatchEndEvent {
+                is_victory: true,
+                reason: format!("¡Misión Cumplida! Embalse preservado con éxito (+{} pts bono sostenibilidad).", sustainability_bonus),
+                final_score: self.team_score,
+                final_metrics: Some(metrics.clone()),
+            };
+            self.match_end_event = Some(end.clone());
+            new_end_event = Some(end);
+            println!("[SIMULATION MATCH END] 🏆 ¡Victoria en sala {}! Puntuación Final: {}", self.room_id, self.team_score);
+        }
+
         let state = GameWorldState {
             tick: self.tick,
             water_metrics: Some(metrics),
@@ -348,6 +430,6 @@ impl GameRoomSimulation {
         };
 
         self.last_snapshot = Some(state.clone());
-        state
+        (state, new_end_event)
     }
 }

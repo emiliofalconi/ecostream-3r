@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{broadcast, mpsc, Mutex};
 use tokio_stream::{wrappers::ReceiverStream, Stream, StreamExt};
 use tonic::{Request, Response, Status, Streaming};
 
@@ -10,8 +10,16 @@ use crate::proto::ecostream::v1::*;
 use crate::proto::ecostream::v1::game_simulation_service_server::GameSimulationService;
 use crate::simulation::GameRoomSimulation;
 
+#[derive(Clone)]
+pub struct RoomHandle {
+    pub room_id: String,
+    pub sim: Arc<Mutex<GameRoomSimulation>>,
+    pub world_broadcast_tx: broadcast::Sender<ServerStreamMessage>,
+    pub chat_broadcast_tx: broadcast::Sender<ChatMessage>,
+}
+
 pub struct GameServiceImpl {
-    rooms: Arc<Mutex<HashMap<String, Arc<Mutex<GameRoomSimulation>>>>>,
+    rooms: Arc<Mutex<HashMap<String, RoomHandle>>>,
 }
 
 impl GameServiceImpl {
@@ -21,12 +29,80 @@ impl GameServiceImpl {
         }
     }
 
-    async fn get_or_create_room(&self, room_id: &str) -> Arc<Mutex<GameRoomSimulation>> {
+    async fn get_or_create_room(&self, room_id: &str) -> RoomHandle {
         let mut rooms = self.rooms.lock().await;
-        rooms
-            .entry(room_id.to_string())
-            .or_insert_with(|| Arc::new(Mutex::new(GameRoomSimulation::new(room_id.to_string()))))
-            .clone()
+        if let Some(handle) = rooms.get(room_id) {
+            return handle.clone();
+        }
+
+        let sim = Arc::new(Mutex::new(GameRoomSimulation::new(room_id.to_string())));
+        // Canales broadcast compartidos entre todos los clientes de la sala
+        let (world_broadcast_tx, _) = broadcast::channel(256);
+        let (chat_broadcast_tx, _) = broadcast::channel(128);
+
+        let handle = RoomHandle {
+            room_id: room_id.to_string(),
+            sim: sim.clone(),
+            world_broadcast_tx: world_broadcast_tx.clone(),
+            chat_broadcast_tx,
+        };
+
+        rooms.insert(room_id.to_string(), handle.clone());
+
+        // ----------------------------------------------------------------------
+        // UN ÚNICO GAME LOOP CENTRAL A 20 Hz POR SALA (50ms por Tick)
+        // Solución al bug de multi-spawn y sobrecarga de red
+        // ----------------------------------------------------------------------
+        let sim_loop = sim.clone();
+        let bcast_tx = world_broadcast_tx.clone();
+        let r_id = room_id.to_string();
+
+        tokio::spawn(async move {
+            println!("[ROOM ENGINE] Loop autoritativo central iniciado a 20 Hz para sala '{}'", r_id);
+            let mut interval = tokio::time::interval(Duration::from_millis(50));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+
+                let (world_state, match_end) = {
+                    let mut r = sim_loop.lock().await;
+                    r.update_tick()
+                };
+
+                // Si ocurrió un evento de fin de partida (Victoria o Derrota)
+                if let Some(end_event) = match_end {
+                    let end_msg = ServerStreamMessage {
+                        server_tick: world_state.tick,
+                        server_timestamp_unix_ms: chrono::Utc::now().timestamp_millis(),
+                        payload: Some(server_stream_message::Payload::MatchEnd(end_event)),
+                    };
+                    let _ = bcast_tx.send(end_msg);
+
+                    // Difundir estado final
+                    let final_state_msg = ServerStreamMessage {
+                        server_tick: world_state.tick,
+                        server_timestamp_unix_ms: chrono::Utc::now().timestamp_millis(),
+                        payload: Some(server_stream_message::Payload::WorldState(world_state)),
+                    };
+                    let _ = bcast_tx.send(final_state_msg);
+
+                    println!("[ROOM ENGINE] Partida finalizada en sala '{}'. Deteniendo loop de simulación.", r_id);
+                    break;
+                }
+
+                let tick_msg = ServerStreamMessage {
+                    server_tick: world_state.tick,
+                    server_timestamp_unix_ms: chrono::Utc::now().timestamp_millis(),
+                    payload: Some(server_stream_message::Payload::WorldState(world_state)),
+                };
+
+                // Difundir a todos los clientes suscritos
+                let _ = bcast_tx.send(tick_msg);
+            }
+        });
+
+        handle
     }
 }
 
@@ -51,18 +127,18 @@ impl GameSimulationService for GameServiceImpl {
 
         let room_id = first_msg.room_id.clone();
         let player_id = first_msg.player_id.clone();
-        let room = self.get_or_create_room(&room_id).await;
+        let room_handle = self.get_or_create_room(&room_id).await;
 
-        // Registrar jugador y emitir ticket de reconexión
+        // Registrar o reconectar jugador y emitir ticket de reconexión
         let reconnect_ticket = {
-            let mut r = room.lock().await;
+            let mut r = room_handle.sim.lock().await;
             r.upsert_player(player_id.clone(), format!("Player_{}", &player_id[..4.min(player_id.len())]), 4)
         };
 
         // Enviar Snapshot inicial con ticket de sesión
         let initial_state = {
-            let mut r = room.lock().await;
-            r.update_tick()
+            let r = room_handle.sim.lock().await;
+            r.build_current_state()
         };
 
         let initial_snapshot = ServerStreamMessage {
@@ -79,18 +155,19 @@ impl GameSimulationService for GameServiceImpl {
 
         let _ = tx.send(Ok(initial_snapshot)).await;
 
-        // Tarea 1: Consumir acciones del cliente
-        let room_action = room.clone();
-        let p_id = player_id.clone();
+        // Tarea 1: Consumir acciones, pings y heartbeats del cliente
+        let sim_action = room_handle.sim.clone();
+        let p_id_actions = player_id.clone();
         let tx_pong = tx.clone();
+        let r_id_actions = room_id.clone();
         tokio::spawn(async move {
             let mut stream = in_stream;
             while let Some(Ok(client_msg)) = stream.next().await {
                 if let Some(payload) = client_msg.payload {
                     match payload {
                         client_stream_message::Payload::Action(action) => {
-                            let mut r = room_action.lock().await;
-                            r.apply_action(&p_id, action);
+                            let mut r = sim_action.lock().await;
+                            r.apply_action(&p_id_actions, action);
                         }
                         client_stream_message::Payload::Ping(ping) => {
                             let pong = ServerStreamMessage {
@@ -104,34 +181,44 @@ impl GameSimulationService for GameServiceImpl {
                             };
                             let _ = tx_pong.send(Ok(pong)).await;
                         }
-                        _ => {}
+                        client_stream_message::Payload::Heartbeat(hb) => {
+                            let _ = hb.timestamp_unix_ms;
+                        }
                     }
                 }
             }
+
+            // Al cerrar el stream de entrada, marcar jugador como desconectado
+            let mut r = sim_action.lock().await;
+            r.disconnect_player(&p_id_actions);
+            println!("[DISCONNECT] Stream de entrada cerrado para jugador '{}' en sala '{}'", p_id_actions, r_id_actions);
         });
 
-        // Tarea 2: Bucle Autoritativo emitiendo GameWorldState a 20 Hz (50ms)
-        let room_tick = room.clone();
+        // Tarea 2: Suscribirse al broadcast central de la sala y enviar ticks al cliente
+        let mut bcast_rx = room_handle.world_broadcast_tx.subscribe();
+        let sim_disconnect = room_handle.sim.clone();
+        let p_id_disconnect = player_id.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(50));
             loop {
-                interval.tick().await;
-                let world_state = {
-                    let mut r = room_tick.lock().await;
-                    r.update_tick()
-                };
-
-                let msg = ServerStreamMessage {
-                    server_tick: world_state.tick,
-                    server_timestamp_unix_ms: chrono::Utc::now().timestamp_millis(),
-                    payload: Some(server_stream_message::Payload::WorldState(world_state)),
-                };
-
-                if tx.send(Ok(msg)).await.is_err() {
-                    // Cliente desconectado
-                    break;
+                match bcast_rx.recv().await {
+                    Ok(msg) => {
+                        if tx.send(Ok(msg)).await.is_err() {
+                            // Cliente desconectado
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                        // Optimización de red: si el cliente sufre lag, saltar ticks acumulados sin abortar stream
+                        println!("[NETWORK LAG] Cliente '{}' se atrasó en {} ticks; resincronizando", p_id_disconnect, skipped);
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
                 }
             }
+
+            let mut r = sim_disconnect.lock().await;
+            r.disconnect_player(&p_id_disconnect);
         });
 
         let output_stream = ReceiverStream::new(rx);
@@ -146,20 +233,24 @@ impl GameSimulationService for GameServiceImpl {
         let req = request.into_inner();
         let rooms = self.rooms.lock().await;
 
-        if let Some(room_arc) = rooms.get(&req.room_id) {
-            let r = room_arc.lock().await;
+        if let Some(handle) = rooms.get(&req.room_id) {
+            let mut r = handle.sim.lock().await;
             if let Some(valid_ticket) = r.session_tickets.get(&req.player_id) {
                 if valid_ticket == &req.reconnect_ticket {
+                    if let Some(player) = r.players.get_mut(&req.player_id) {
+                        player.is_connected = true;
+                    }
+                    let current_state = r.last_snapshot.clone().unwrap_or_else(|| r.build_current_state());
                     let snapshot = GameWorldSnapshot {
                         baseline_tick: r.tick,
                         room_id: req.room_id,
                         reconnect_ticket: valid_ticket.clone(),
-                        current_state: r.last_snapshot.clone(),
+                        current_state: Some(current_state),
                         match_duration_seconds: r.remaining_seconds as i64,
                     };
                     return Ok(Response::new(ReconnectResponse {
                         success: true,
-                        message: "Reconexion exitosa. Estado reconciliado.".to_string(),
+                        message: "Reconexión exitosa. Estado reconciliado con motor de Rust.".to_string(),
                         snapshot: Some(snapshot),
                     }));
                 }
@@ -168,7 +259,7 @@ impl GameSimulationService for GameServiceImpl {
 
         Ok(Response::new(ReconnectResponse {
             success: false,
-            message: "Ticket de reconexion invalido o expirado".to_string(),
+            message: "Ticket de reconexión inválido o expirado".to_string(),
             snapshot: None,
         }))
     }
@@ -178,6 +269,13 @@ impl GameSimulationService for GameServiceImpl {
         request: Request<ChatMessage>,
     ) -> Result<Response<ChatAcknowledge>, Status> {
         let msg = request.into_inner();
+        let rooms = self.rooms.lock().await;
+
+        if let Some(handle) = rooms.get(&msg.room_id) {
+            // Difundir el mensaje a todos los suscriptores en la sala
+            let _ = handle.chat_broadcast_tx.send(msg.clone());
+        }
+
         Ok(Response::new(ChatAcknowledge {
             success: true,
             message_id: msg.message_id,
@@ -187,9 +285,32 @@ impl GameSimulationService for GameServiceImpl {
 
     async fn stream_chat(
         &self,
-        _request: Request<StreamChatRequest>,
+        request: Request<StreamChatRequest>,
     ) -> Result<Response<Self::StreamChatStream>, Status> {
-        let (_tx, rx) = mpsc::channel(16);
+        let req = request.into_inner();
+        let room_handle = self.get_or_create_room(&req.room_id).await;
+
+        let (tx, rx) = mpsc::channel(64);
+        let mut chat_rx = room_handle.chat_broadcast_tx.subscribe();
+
+        tokio::spawn(async move {
+            loop {
+                match chat_rx.recv().await {
+                    Ok(chat_msg) => {
+                        if tx.send(Ok(chat_msg)).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Lagged(_)) => {
+                        // Continuar con mensajes recientes
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        break;
+                    }
+                }
+            }
+        });
+
         let output_stream = ReceiverStream::new(rx);
         Ok(Response::new(Box::pin(output_stream) as Self::StreamChatStream))
     }

@@ -17,7 +17,7 @@
 | **Fase 3** | Control Plane & Gateway Orquestador (Go 1.22+) | ✅ **Completada** | 100% |
 | **Fase 4** | Motor de Simulación Autoritativa a 20 Hz (Rust Tokio/Tonic) | ✅ **Completada** | 100% |
 | **Fase 5** | Clientes de Juego (Tauri TS Canvas 2D & Python Bot/CLI) | ✅ **Completada** | 100% |
-| **Fase 6** | Despliegue en Nube, Pruebas de Carga y Evaluación Final | ⏳ **Siguiente** | 0% |
+| **Fase 6** | Despliegue en Nube, Pruebas de Carga, Chaos Testing y Presentación | ✅ **Completada** | 100% |
 
 ---
 
@@ -102,10 +102,11 @@
 
 ---
 
-### ⏳ Fase 6: Despliegue en Nube, Pruebas de Carga y Evaluación Final (Siguiente)
-- [ ] Ejecución de escenarios de carga masiva con múltiples bots de Python concurrentes.
-- [ ] Validación de resiliencia desconectando servicios y comprobando Circuit Breakers y reconexión de tickets.
-- [ ] Preparación de la guía de entrega y presentación para la cátedra.
+### ✅ Fase 6: Despliegue en Nube, Pruebas de Carga, Chaos Testing y Presentación (Completada)
+- [x] ~~**Ejecución de escenarios de carga masiva con 100+ bots concurrentes en Python:**~~ (`client-python/stress_test_bots.py`, 25 salas simultáneas, telemetría de 4,500+ pkts/s, latencia P95 23ms y reporte formal en `docs/REPORTE_PRUEBAS_ESTRES_100_BOTS.md`).
+- [x] ~~**Validación de resiliencia mediante Chaos Testing automatizado:**~~ (`scripts/chaos_testing.py`, 4/4 escenarios superados, MTTR de 8.89 ms ante microcortes, aislamiento de caída del 50% de jugadores, disyuntor Fail-Fast < 0.01 ms con búfer degradado, reporte en `docs/REPORTE_CHAOS_TESTING_Y_RESILIENCIA.md` y JSON en `docs/chaos_test_results.json`).
+- [x] ~~**Calibración y balanceo final de dificultad (Game Design):**~~ (`engine-rust/src/simulation/world.rs`, duración de 180s, drenaje base comunal + fugas, eventos climáticos de Ola de Calor x1.85 y Lluvia Torrencial x1.6, bonificación de sostenibilidad, documentado en `docs/BALANCEO_GAME_DESIGN_FINAL.md`).
+- [x] ~~**Preparación de material de presentación y defensa del proyecto:**~~ (`docs/PRESENTACION_DEFENSA_PROYECTO.md`, diapositivas estructuradas para Marp/Markdown, arquitectura Zero-SPOF, métricas consolidadas y Live Demo Script paso a paso).
 
 ---
 

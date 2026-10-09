@@ -47,12 +47,28 @@ interface CropTile {
   type: number;
 }
 
+interface Shockwave {
+  x: number;
+  y: number;
+  radius: number;
+  maxRadius: number;
+  color: string;
+  alpha: number;
+  lineWidth: number;
+}
+
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 
 // Partículas y Efectos Visuales
 const particles: Particle[] = [];
 const floatingTexts: FloatingText[] = [];
+const shockwaves: Shockwave[] = [];
+let screenShake = 0;
+
+function triggerScreenShake(intensity: number) {
+  screenShake = Math.max(screenShake, intensity);
+}
 
 // Estado Global del Juego
 const state = {
@@ -65,6 +81,8 @@ const state = {
     totalLitersRecycled: 0,
   } as WaterMetrics,
   score: 0,
+  isGameOver: false,
+  hasWon: false,
   player: {
     x: 420,
     y: 320,
@@ -121,19 +139,44 @@ window.addEventListener('keyup', (e) => {
   keys[e.key.toLowerCase()] = false;
 });
 
-// Botones UI
-document.getElementById('btnReduce')?.addEventListener('click', actionReduce);
-document.getElementById('btnReuse')?.addEventListener('click', actionReuse);
-document.getElementById('btnRecycle')?.addEventListener('click', actionRecycle);
+// Botones UI con sonido de click
+document.getElementById('btnReduce')?.addEventListener('click', () => { sound.playButtonClick(); actionReduce(); });
+document.getElementById('btnReuse')?.addEventListener('click', () => { sound.playButtonClick(); actionReuse(); });
+document.getElementById('btnRecycle')?.addEventListener('click', () => { sound.playButtonClick(); actionRecycle(); });
 
-// Toggle Sonido
+// Toggle Sonido con Ambiente Procedural
 const btnSound = document.getElementById('btnSoundToggle');
 btnSound?.addEventListener('click', () => {
   sound.enabled = !sound.enabled;
+  sound.playButtonClick();
+  sound.toggleAmbience(sound.enabled);
   if (btnSound) {
     btnSound.textContent = sound.enabled ? '🔊' : '🔇';
     btnSound.style.opacity = sound.enabled ? '1.0' : '0.5';
   }
+});
+
+// Click en el Canvas para Mover Avatar y Generar Ondas de Agua (Ripples)
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+  const clickX = (e.clientX - rect.left) * scaleX;
+  const clickY = (e.clientY - rect.top) * scaleY;
+
+  state.player.targetX = clickX;
+  state.player.targetY = clickY;
+
+  shockwaves.push({
+    x: clickX,
+    y: clickY,
+    radius: 4,
+    maxRadius: 32,
+    color: '#38bdf8',
+    alpha: 0.9,
+    lineWidth: 2.2,
+  });
+  sound.playWaterSplash();
 });
 
 // Toast Notificaciones
@@ -168,13 +211,28 @@ function actionReduce() {
     state.player.isWrenching = true;
     setTimeout(() => (state.player.isWrenching = false), 500);
 
-    // Chispas de soldadura
-    for (let i = 0; i < 25; i++) {
+    triggerScreenShake(6);
+    sound.playRepair();
+    sound.playShockwave();
+
+    // Onda expansiva en la tubería reparada
+    shockwaves.push({
+      x: leaking.x + 110,
+      y: leaking.y + 13,
+      radius: 8,
+      maxRadius: 65,
+      color: '#38bdf8',
+      alpha: 1.0,
+      lineWidth: 3,
+    });
+
+    // Chispas de soldadura metálica
+    for (let i = 0; i < 28; i++) {
       particles.push({
         x: leaking.x + 110,
         y: leaking.y + 13,
-        vx: (Math.random() - 0.5) * 8,
-        vy: (Math.random() - 0.7) * 7,
+        vx: (Math.random() - 0.5) * 8.5,
+        vy: (Math.random() - 0.7) * 7.5,
         life: 1.0,
         maxLife: 1.0,
         color: ['#fbbf24', '#f59e0b', '#38bdf8', '#ffffff'][Math.floor(Math.random() * 4)],
@@ -183,7 +241,6 @@ function actionReduce() {
       });
     }
 
-    sound.playRepair();
     spawnFloatingText('+150 PTS (80L Salvados!)', leaking.x + 60, leaking.y - 10, '#38bdf8');
     showToast('¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
     updateHUD();
@@ -193,7 +250,20 @@ function actionReduce() {
     if (okPipes.length > 0) {
       const p = okPipes[Math.floor(Math.random() * okPipes.length)];
       p.isLeaking = true;
+      triggerScreenShake(9);
       sound.playLeakAlert();
+      sound.playShockwave();
+
+      shockwaves.push({
+        x: p.x + 110,
+        y: p.y + 13,
+        radius: 6,
+        maxRadius: 55,
+        color: '#ef4444',
+        alpha: 1.0,
+        lineWidth: 2.5,
+      });
+
       showToast(`¡Nueva rotura a presión en Tubería #${p.id}!`, 'reduce');
     }
   }
@@ -205,10 +275,23 @@ function actionReuse() {
   state.sprinklersActive = true;
   state.sprinklerTimer = 120; // 2 segundos
 
-  // Crecer cultivos
+  sound.playReuse();
+  sound.playWaterSplash();
+
+  // Ondas de riego sobre el huerto
+  shockwaves.push({
+    x: 390,
+    y: 440,
+    radius: 12,
+    maxRadius: 90,
+    color: '#34d399',
+    alpha: 0.85,
+    lineWidth: 3,
+  });
+
+  // Crecer cultivos y emitir hojas
   state.crops.forEach((c) => {
     c.growth = Math.min(1.0, c.growth + 0.15);
-    // Partículas de hojas / crecimiento
     particles.push({
       x: c.x + 15,
       y: c.y,
@@ -222,7 +305,6 @@ function actionReuse() {
     });
   });
 
-  sound.playReuse();
   spawnFloatingText('+80 PTS (45L Reusados en Riego 🌱)', 340, 360, '#34d399');
   showToast('Aguas grises canalizadas al huerto comunitario', 'reuse');
   updateHUD();
@@ -233,8 +315,22 @@ function actionRecycle() {
   state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 2.0);
   state.score += 120;
 
+  sound.playRecycle();
+  sound.playWaterSplash();
+
+  // Onda de purificación en la planta
+  shockwaves.push({
+    x: state.plant.x,
+    y: state.plant.y + 20,
+    radius: 10,
+    maxRadius: 85,
+    color: '#c084fc',
+    alpha: 0.9,
+    lineWidth: 3,
+  });
+
   // Burbujas y brillo en la planta de purificación
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 24; i++) {
     particles.push({
       x: state.plant.x + (Math.random() - 0.5) * 80,
       y: state.plant.y + 40,
@@ -248,7 +344,6 @@ function actionRecycle() {
     });
   }
 
-  sound.playRecycle();
   spawnFloatingText('+120 PTS (Pureza +2.0% ⚗️)', state.plant.x - 60, state.plant.y - 40, '#c084fc');
   showToast('Planta de filtrado biológico activada. Pureza restaurada.', 'recycle');
   updateHUD();
@@ -314,6 +409,21 @@ function updateHUD() {
 
   if (elScr) elScr.textContent = `${state.score} pts`;
   if (elSav) elSav.textContent = `${state.metrics.totalLitersSaved} L`;
+
+  // Detección y feedback auditivo/visual de Sequía Crítica
+  if (resPct <= 0 && !state.isGameOver) {
+    state.isGameOver = true;
+    triggerScreenShake(14);
+    sound.playDefeat();
+    showToast('¡SEQUÍA CRÍTICA! El nivel del embalse se ha agotado por completo 💀', 'reduce');
+  }
+
+  // Detección de Hito de Victoria (Puntaje Ecológico)
+  if (state.score >= 1000 && !state.hasWon) {
+    state.hasWon = true;
+    sound.playVictory();
+    showToast('¡HITO ALCANZADO! +1000 Pts de Conservación Hídrica 🏆', 'reuse');
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -331,7 +441,7 @@ function gameLoop() {
     if (state.sprinklerTimer === 0) state.sprinklersActive = false;
   }
 
-  // Movimiento suave del jugador
+  // Movimiento suave del jugador con interpolación hacia click target
   const speed = 4.5;
   let moveX = 0;
   let moveY = 0;
@@ -340,17 +450,50 @@ function gameLoop() {
   if (keys['a'] || keys['arrowleft']) moveX -= speed;
   if (keys['d'] || keys['arrowright']) moveX += speed;
 
+  if (moveX === 0 && moveY === 0) {
+    const dx = state.player.targetX - state.player.x;
+    const dy = state.player.targetY - state.player.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist > 5) {
+      moveX = (dx / dist) * Math.min(dist, speed);
+      moveY = (dy / dist) * Math.min(dist, speed);
+    }
+  }
+
   state.player.x = Math.max(60, Math.min(canvas.width - 60, state.player.x + moveX));
   state.player.y = Math.max(60, Math.min(canvas.height - 60, state.player.y + moveY));
 
   if (moveX !== 0 || moveY !== 0) {
     state.player.angle = Math.atan2(moveY, moveX);
+    if (state.tick % 11 === 0) {
+      sound.playFootstep();
+      particles.push({
+        x: state.player.x + (Math.random() - 0.5) * 8,
+        y: state.player.y + 14,
+        vx: -moveX * 0.15 + (Math.random() - 0.5) * 0.6,
+        vy: (Math.random() - 0.5) * 0.6,
+        life: 0.5,
+        maxLife: 0.5,
+        color: 'rgba(217, 180, 130, 0.45)',
+        size: 2.2,
+        type: 'leaf',
+      });
+    }
   }
 
   // Drenaje continuo realista
   const hasLeak = state.pipes.some((p) => p.isLeaking);
   state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - (hasLeak ? 0.02 : 0.004));
   if (state.tick % 25 === 0) updateHUD();
+
+  // Iniciar Screen Shake (si está activo)
+  ctx.save();
+  if (screenShake > 0) {
+    const sx = (Math.random() - 0.5) * screenShake * 2;
+    const sy = (Math.random() - 0.5) * screenShake * 2;
+    ctx.translate(sx, sy);
+    screenShake = Math.max(0, screenShake * 0.86 - 0.25);
+  }
 
   // 1. Limpiar Fondo con Gradiente Sutil de Profundidad
   const bgGrad = ctx.createRadialGradient(
@@ -788,6 +931,32 @@ function gameLoop() {
     ctx.restore();
   }
 
+  // ------------------------------------------------------------------------
+  // 9. ONDAS EXPANSIVAS / SHOCKWAVES & RIPPLES (FEEDBACK VISUAL DE AGUA)
+  // ------------------------------------------------------------------------
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const sw = shockwaves[i];
+    sw.radius += (sw.maxRadius - sw.radius) * 0.12 + 1.2;
+    sw.alpha *= 0.91;
+
+    if (sw.alpha <= 0.01 || sw.radius >= sw.maxRadius) {
+      shockwaves.splice(i, 1);
+      continue;
+    }
+
+    ctx.save();
+    ctx.strokeStyle = sw.color;
+    ctx.globalAlpha = Math.max(0, sw.alpha);
+    ctx.lineWidth = sw.lineWidth;
+    ctx.beginPath();
+    ctx.arc(sw.x, sw.y, sw.radius, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Restaurar contexto del canvas (final de Screen Shake)
+  ctx.restore();
+
   requestAnimationFrame(gameLoop);
 }
 
@@ -849,8 +1018,14 @@ function toggleLobby(show: boolean) {
   }
 }
 
-btnOpenLobby?.addEventListener('click', () => toggleLobby(true));
-btnCloseLobby?.addEventListener('click', () => toggleLobby(false));
+btnOpenLobby?.addEventListener('click', () => {
+  sound.playButtonClick();
+  toggleLobby(true);
+});
+btnCloseLobby?.addEventListener('click', () => {
+  sound.playButtonClick();
+  toggleLobby(false);
+});
 
 inputGatewayHost?.addEventListener('change', () => {
   checkGatewayHealth();
@@ -1026,6 +1201,7 @@ async function fetchRoomsList() {
 
       document.querySelectorAll('.join-quick-btn').forEach((btn) => {
         btn.addEventListener('click', (e) => {
+          sound.playButtonClick();
           const target = e.currentTarget as HTMLElement;
           const code = target.getAttribute('data-code');
           if (code && inputRoomCode) {
@@ -1047,9 +1223,18 @@ function updateRoomUI(code: string) {
   if (roomDot) roomDot.className = 'room-dot connected';
 }
 
-btnCreateRoomGo?.addEventListener('click', handleCreateRoom);
-btnJoinRoomGo?.addEventListener('click', handleJoinRoom);
-btnRefreshRooms?.addEventListener('click', fetchRoomsList);
+btnCreateRoomGo?.addEventListener('click', () => {
+  sound.playButtonClick();
+  handleCreateRoom();
+});
+btnJoinRoomGo?.addEventListener('click', () => {
+  sound.playButtonClick();
+  handleJoinRoom();
+});
+btnRefreshRooms?.addEventListener('click', () => {
+  sound.playButtonClick();
+  fetchRoomsList();
+});
 
 setTimeout(checkGatewayHealth, 1000);
 

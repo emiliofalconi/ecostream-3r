@@ -148,6 +148,39 @@ class GameSimulationServiceServicer(gameplay_pb2_grpc.GameSimulationServiceServi
                 )
                 yield pong_msg
 
+    def ReconnectSession(self, request, context):
+        print(f"[RECONNECT] Peticion de reconexion recibida para {request.player_id} en sala {request.room_id}")
+        if request.reconnect_ticket.startswith("tkt_"):
+            snapshot = gameplay_pb2.GameWorldSnapshot(
+                baseline_tick=request.last_received_tick + 10,
+                room_id=request.room_id,
+                reconnect_ticket=request.reconnect_ticket,
+                match_duration_seconds=180,
+                current_state=gameplay_pb2.GameWorldState(
+                    tick=request.last_received_tick + 10,
+                    water_metrics=common_pb2.WaterMetrics(
+                        reservoir_level_pct=85.5,
+                        water_purity_pct=95.0,
+                        total_liters_saved=150.0,
+                        total_liters_reused=40.0,
+                        total_liters_recycled=50.0
+                    ),
+                    team_score=350,
+                    remaining_seconds=150
+                )
+            )
+            return gameplay_pb2.ReconnectResponse(
+                success=True,
+                message="Reconexión exitosa reconciliada con servidor autoritativo.",
+                snapshot=snapshot
+            )
+        else:
+            return gameplay_pb2.ReconnectResponse(
+                success=False,
+                message="Ticket de reconexión inválido o sesión expirada.",
+                snapshot=None
+            )
+
 def serve(port=50051):
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
     auth_pb2_grpc.add_AuthServiceServicer_to_server(AuthServiceServicer(), server)

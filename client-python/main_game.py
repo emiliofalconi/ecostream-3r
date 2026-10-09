@@ -368,7 +368,28 @@ class EcoStreamGameClient:
                 action_id=int(time.time() * 1000),
                 operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
             ))
-            self.floating_texts.append(FloatingText("+100 PTS [A* Filtro UV ⚗️]", self.player_x - 30, self.player_y - 20, (192, 132, 252)))
+    def run_headless(self, duration_sec: Optional[float] = None):
+        """
+        Ejecuta el loop de juego en modo headless (sin interfaz gráfica) a 20 Hz.
+        Ideal para bots individuales y pruebas de rendimiento en servidores sin GUI.
+        """
+        print(f"[BOT HEADLESS] Bot '{self.player_id}' iniciado en sala '{self.room_id}' hacia {self.host}")
+        start_time = time.time()
+        tick_count = 0
+        try:
+            while True:
+                time.sleep(0.05)  # 20 Hz (50 ms por tick)
+                tick_count += 1
+                if self.is_bot:
+                    self.bot_ai_tick()
+                if tick_count % 40 == 0:  # Cada 2 segundos
+                    status = "ONLINE 20Hz" if self.is_connected else "RECONECTANDO"
+                    print(f"[{self.player_id}] Tick #{self.tick} | Estado: {status} | Latencia: {self.rtt_ms}ms | Score: {self.team_score} | Ahorro: {self.liters_saved:.1f} L")
+                if duration_sec and (time.time() - start_time) >= duration_sec:
+                    print(f"[BOT HEADLESS] Duración de {duration_sec}s completada.")
+                    break
+        except KeyboardInterrupt:
+            print(f"\n[BOT HEADLESS] Bot '{self.player_id}' detenido por el usuario.")
 
     def run(self):
         pygame.init()
@@ -552,6 +573,8 @@ class EcoStreamGameClient:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="EcoStream 3R - Cliente de Juego")
     parser.add_argument("--bot", action="store_true", help="Activa el modo bot automático para pruebas de carga")
+    parser.add_argument("--headless", action="store_true", help="Ejecutar en modo consola sin interfaz gráfica Pygame")
+    parser.add_argument("--duration", type=float, default=None, help="Duración en segundos para la ejecución headless")
     parser.add_argument("--host", default="localhost:50052", help="Host gRPC del motor Rust")
     parser.add_argument("--room", default="rm_demo_01", help="ID de la sala")
     parser.add_argument("--player", default="usr_victor_admin", help="ID del jugador")
@@ -563,4 +586,8 @@ if __name__ == "__main__":
         player_id=args.player,
         is_bot=args.bot
     )
-    client.run()
+
+    if args.headless:
+        client.run_headless(duration_sec=args.duration)
+    else:
+        client.run()

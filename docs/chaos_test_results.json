@@ -1,0 +1,51 @@
+{
+  "suite_name": "EcoStream 3R - Chaos Testing & Resilience Suite",
+  "timestamp": "2026-10-09 01:33:55",
+  "environment": "Distributed Microservices (Go Gateway + Rust 20Hz Simulation + Postgres 16)",
+  "tests": {
+    "transient_network_partition": {
+      "status": "PASS",
+      "scenario": "Microcorte de enlace y reconexión por ticket",
+      "partition_duration_sec": 1.5,
+      "mttr_ms": 8.89,
+      "state_preserved": true,
+      "reconciled_tick": 15,
+      "reservoir_retained_pct": 85.5
+    },
+    "multiplayer_dropout_isolation": {
+      "status": "PASS",
+      "scenario": "Aislamiento de desconexión masiva de jugadores",
+      "initial_players": 4,
+      "dropped_players": 2,
+      "survivors_packet_count": [
+        45,
+        50
+      ],
+      "room_collapsed": false,
+      "engine_tick_frequency_sustained": true
+    },
+    "database_outage_circuit_breaker": {
+      "status": "PASS",
+      "scenario": "Disyuntor Circuit Breaker ante caída de Postgres",
+      "tripped_to_open": true,
+      "avg_fail_fast_ms": 0.0,
+      "degraded_buffer_saved_events": 8,
+      "auto_recovered_to_closed": true
+    },
+    "burst_traffic_and_desync": {
+      "status": "PASS",
+      "scenario": "Sobrecarga por ráfaga masiva y absorción de cola",
+      "burst_packets_sent": 200,
+      "packets_processed": 200,
+      "processing_rate_pps": 2506.5,
+      "saturation_duration_ms": 79.79
+    }
+  },
+  "global_metrics": {
+    "total_scenarios": 4,
+    "passed_scenarios": 4,
+    "resilience_score_pct": 100.0,
+    "mean_time_to_recovery_ms": 8.89,
+    "circuit_breaker_fail_fast_ms": 0.0
+  }
+}
