@@ -117,10 +117,17 @@ CREATE TABLE audit_logs (
 -- ------------------------------------------------------------------------------
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_leaderboard ON users(total_eco_score DESC, games_won DESC);
 CREATE INDEX idx_rooms_room_code ON rooms(room_code);
 CREATE INDEX idx_rooms_status ON rooms(status);
+CREATE INDEX idx_rooms_status_created ON rooms(status, created_at DESC);
 CREATE INDEX idx_room_players_room_id ON room_players(room_id);
+CREATE INDEX idx_room_players_user_id ON room_players(user_id);
 CREATE INDEX idx_matches_finished_at ON matches(finished_at DESC);
+CREATE INDEX idx_matches_room_code ON matches(room_code);
+CREATE INDEX idx_matches_victory_finished ON matches(is_victory, finished_at DESC);
+CREATE INDEX idx_match_player_stats_user_id ON match_player_stats(user_id);
+CREATE INDEX idx_match_player_stats_match_id ON match_player_stats(match_id);
 CREATE INDEX idx_audit_logs_event_type ON audit_logs(event_type);
 CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
 

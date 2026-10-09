@@ -89,6 +89,17 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Base de datos no disponible temporalmente (Circuit Breaker activado)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": false,
+                  "message": "Base de datos temporalmente no disponible (Circuit Breaker activado). Por favor reintente en unos segundos."
+                }
+              }
+            }
           }
         }
       }
@@ -121,6 +132,17 @@
                   "success": true,
                   "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
                   "expires_at_unix": 1790994000
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Base de datos no disponible temporalmente (Circuit Breaker activado)",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": false,
+                  "message": "Base de datos temporalmente no disponible (Circuit Breaker activado). Por favor reintente en unos segundos."
                 }
               }
             }

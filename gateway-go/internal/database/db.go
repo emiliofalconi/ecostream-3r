@@ -7,11 +7,13 @@ import (
 	"log"
 	"time"
 
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/circuitbreaker"
 	_ "github.com/lib/pq"
 )
 
 type DB struct {
 	*sql.DB
+	Breaker *circuitbreaker.CircuitBreaker
 }
 
 func Connect(dbURL string) (*DB, error) {
@@ -32,20 +34,36 @@ func Connect(dbURL string) (*DB, error) {
 		pingErr = db.Ping()
 		if pingErr == nil {
 			log.Println("[DATABASE] Conexión establecida exitosamente con PostgreSQL 16")
-			return &DB{db}, nil
+			return &DB{DB: db}, nil
 		}
 		log.Printf("[DATABASE] Esperando base de datos (intento %d/5): %v", i, pingErr)
 		time.Sleep(2 * time.Second)
 	}
 
-	return &DB{db}, fmt.Errorf("no se pudo conectar a la base de datos tras 5 intentos: %w", pingErr)
+	return &DB{DB: db}, fmt.Errorf("no se pudo conectar a la base de datos tras 5 intentos: %w", pingErr)
+}
+
+func (d *DB) WithBreaker(breaker *circuitbreaker.CircuitBreaker) *DB {
+	d.Breaker = breaker
+	return d
 }
 
 func (d *DB) PingCheck() bool {
 	if d == nil || d.DB == nil {
 		return false
 	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
+
+	if d.Breaker != nil {
+		var pingErr error
+		err := d.Breaker.Execute(func() error {
+			pingErr = d.DB.PingContext(ctx)
+			return pingErr
+		})
+		return err == nil && pingErr == nil
+	}
+
 	return d.DB.PingContext(ctx) == nil
 }

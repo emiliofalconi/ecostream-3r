@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
 
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/circuitbreaker"
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -20,13 +22,19 @@ type Claims struct {
 
 type Service struct {
 	db        *sql.DB
+	cb        *circuitbreaker.CircuitBreaker
 	jwtSecret []byte
 	expHours  int
 }
 
-func NewService(db *sql.DB, secret string, expHours int) *Service {
+func NewService(db *sql.DB, secret string, expHours int, cb ...*circuitbreaker.CircuitBreaker) *Service {
+	var breaker *circuitbreaker.CircuitBreaker
+	if len(cb) > 0 {
+		breaker = cb[0]
+	}
 	return &Service{
 		db:        db,
+		cb:        breaker,
 		jwtSecret: []byte(secret),
 		expHours:  expHours,
 	}
@@ -105,6 +113,16 @@ func (s *Service) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 		req.DefaultRole = 4 // Generalist
 	}
 
+	if s.db == nil || (s.cb != nil && s.cb.State() == circuitbreaker.StateOpen) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(AuthResp{
+			Success: false,
+			Message: "Base de datos temporalmente no disponible (Circuit Breaker activado). Por favor reintente en unos segundos.",
+		})
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		http.Error(w, "Error cifrando contrasena", http.StatusInternalServerError)
@@ -115,8 +133,26 @@ func (s *Service) RegisterHandler(w http.ResponseWriter, r *http.Request) {
 	query := `INSERT INTO users (username, email, password_hash, default_role)
 	          VALUES ($1, $2, $3, $4)
 	          RETURNING id`
-	err = s.db.QueryRow(query, req.Username, req.Email, string(hash), req.DefaultRole).Scan(&userID)
+
+	insertFunc := func() error {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		return s.db.QueryRowContext(ctx, query, req.Username, req.Email, string(hash), req.DefaultRole).Scan(&userID)
+	}
+
+	if s.cb != nil {
+		err = s.cb.Execute(insertFunc)
+	} else {
+		err = insertFunc()
+	}
+
 	if err != nil {
+		if err == circuitbreaker.ErrCircuitOpen {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(AuthResp{Success: false, Message: "Circuit Breaker activado: servicio de base de datos no disponible"})
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		json.NewEncoder(w).Encode(AuthResp{Success: false, Message: "El usuario o correo ya existe"})
@@ -152,6 +188,16 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.db == nil || (s.cb != nil && s.cb.State() == circuitbreaker.StateOpen) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		json.NewEncoder(w).Encode(AuthResp{
+			Success: false,
+			Message: "Base de datos temporalmente no disponible (Circuit Breaker activado). Por favor reintente en unos segundos.",
+		})
+		return
+	}
+
 	var userID, username, email, hash string
 	var defaultRole, gamesPlayed, gamesWon int
 	var ecoScore float64
@@ -159,10 +205,29 @@ func (s *Service) LoginHandler(w http.ResponseWriter, r *http.Request) {
 	query := `SELECT id, username, email, password_hash, default_role, games_played, games_won, total_eco_score
 	          FROM users
 	          WHERE username = $1 OR email = $1`
-	err := s.db.QueryRow(query, req.UsernameOrEmail).Scan(
-		&userID, &username, &email, &hash, &defaultRole, &gamesPlayed, &gamesWon, &ecoScore,
-	)
+
+	selectFunc := func() error {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+		return s.db.QueryRowContext(ctx, query, req.UsernameOrEmail).Scan(
+			&userID, &username, &email, &hash, &defaultRole, &gamesPlayed, &gamesWon, &ecoScore,
+		)
+	}
+
+	var err error
+	if s.cb != nil {
+		err = s.cb.Execute(selectFunc)
+	} else {
+		err = selectFunc()
+	}
+
 	if err != nil {
+		if err == circuitbreaker.ErrCircuitOpen {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			json.NewEncoder(w).Encode(AuthResp{Success: false, Message: "Circuit Breaker activado: servicio de base de datos no disponible"})
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusUnauthorized)
 		json.NewEncoder(w).Encode(AuthResp{Success: false, Message: "Credenciales invalidas"})

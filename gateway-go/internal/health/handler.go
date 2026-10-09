@@ -38,11 +38,17 @@ func (h *Handler) LivenessHandler(w http.ResponseWriter, r *http.Request) {
 
 // Readiness Probe (GET /readyz)
 func (h *Handler) ReadinessHandler(w http.ResponseWriter, r *http.Request) {
-	dbHealthy := h.db.PingCheck()
+	dbHealthy := false
+	if h.db != nil {
+		dbHealthy = h.db.PingCheck()
+	}
 	status := "READY"
 	httpCode := http.StatusOK
 
-	if !dbHealthy {
+	if h.dbCB != nil && h.dbCB.State() == circuitbreaker.StateOpen {
+		status = "CIRCUIT_BREAKER_OPEN_DATABASE_DEGRADED"
+		httpCode = http.StatusServiceUnavailable
+	} else if !dbHealthy {
 		status = "DEGRADED_DATABASE_UNAVAILABLE"
 		httpCode = http.StatusServiceUnavailable
 	}

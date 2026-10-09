@@ -1,6 +1,7 @@
 package leaderboard
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/auth"
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/circuitbreaker"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workers"
 )
 
@@ -66,14 +68,21 @@ type MatchHistoryEntry struct {
 
 type Service struct {
 	db          *sql.DB
+	cb          *circuitbreaker.CircuitBreaker
 	authService *auth.Service
 	matchQueue  chan RecordMatchReq
 	auditPool   *workers.AuditWorkerPool
 }
 
-func NewService(db *sql.DB, authService *auth.Service, auditPool *workers.AuditWorkerPool) *Service {
+func NewService(db *sql.DB, authService *auth.Service, auditPool *workers.AuditWorkerPool, cb ...*circuitbreaker.CircuitBreaker) *Service {
+	var breaker *circuitbreaker.CircuitBreaker
+	if len(cb) > 0 {
+		breaker = cb[0]
+	}
+
 	s := &Service{
 		db:          db,
+		cb:          breaker,
 		authService: authService,
 		matchQueue:  make(chan RecordMatchReq, 200),
 		auditPool:   auditPool,
@@ -139,70 +148,86 @@ func (s *Service) matchWorker(workerID int) {
 }
 
 func (s *Service) processMatchPersistence(req RecordMatchReq) {
-	if s.db == nil {
-		log.Printf("[LEADERBOARD MOCK] Partida registrada en modo degradado (Score: %d, Room: %s)", req.FinalScore, req.RoomCode)
+	if s.db == nil || (s.cb != nil && s.cb.State() == circuitbreaker.StateOpen) {
+		log.Printf("[LEADERBOARD DEGRADED] Base de datos no disponible o Circuit Breaker abierto. Partida %s registrada en buffer degradado (Score: %d)", req.RoomCode, req.FinalScore)
 		return
 	}
 
-	tx, err := s.db.Begin()
-	if err != nil {
-		log.Printf("[LEADERBOARD ERROR] Fallo al iniciar transacción: %v", err)
-		return
-	}
-	defer tx.Rollback()
+	persistFunc := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
 
-	matchID := fmt.Sprintf("mtc_%s_%d", req.RoomCode, time.Now().Unix())
-	startedAt := time.Now().Add(-time.Duration(req.DurationSeconds) * time.Second)
-
-	matchQuery := `INSERT INTO matches (
-		id, room_id, room_code, is_victory, end_reason, final_score,
-		final_reservoir_pct, final_water_purity_pct, total_liters_saved,
-		total_liters_reused, total_liters_recycled, duration_seconds, started_at, finished_at
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())`
-
-	_, err = tx.Exec(
-		matchQuery,
-		matchID, req.RoomID, req.RoomCode, req.IsVictory, req.EndReason, req.FinalScore,
-		req.FinalReservoirPct, req.FinalWaterPurityPct, req.TotalLitersSaved,
-		req.TotalLitersReused, req.TotalLitersRecycled, req.DurationSeconds, startedAt,
-	)
-	if err != nil {
-		log.Printf("[LEADERBOARD ERROR] Error insertando partida en DB: %v", err)
-		return
-	}
-
-	// Insertar estadísticas por jugador y actualizar perfiles para el Leaderboard
-	for _, p := range req.Players {
-		statQuery := `INSERT INTO match_player_stats (
-			match_id, user_id, username, role_played, repairs_done,
-			water_saved_liters, water_recycled_liters, individual_points
-		) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8)`
-
-		_, _ = tx.Exec(statQuery, matchID, p.UserID, p.Username, p.RolePlayed, p.RepairsDone,
-			p.WaterSavedLiters, p.WaterRecycledLiters, p.IndividualPoints)
-
-		// Actualizar ranking acumulativo en tabla users si existe el usuario
-		if p.UserID != "" {
-			wonIncrement := 0
-			if req.IsVictory {
-				wonIncrement = 1
-			}
-			updateUserQuery := `UPDATE users
-				SET games_played = games_played + 1,
-				    games_won = games_won + $1,
-				    total_eco_score = total_eco_score + $2,
-				    updated_at = NOW()
-				WHERE id = $3`
-			_, _ = tx.Exec(updateUserQuery, wonIncrement, p.IndividualPoints, p.UserID)
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return err
 		}
+		defer tx.Rollback()
+
+		matchID := fmt.Sprintf("mtc_%s_%d", req.RoomCode, time.Now().Unix())
+		startedAt := time.Now().Add(-time.Duration(req.DurationSeconds) * time.Second)
+
+		matchQuery := `INSERT INTO matches (
+			id, room_id, room_code, is_victory, end_reason, final_score,
+			final_reservoir_pct, final_water_purity_pct, total_liters_saved,
+			total_liters_reused, total_liters_recycled, duration_seconds, started_at, finished_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW())`
+
+		_, err = tx.ExecContext(
+			ctx,
+			matchQuery,
+			matchID, req.RoomID, req.RoomCode, req.IsVictory, req.EndReason, req.FinalScore,
+			req.FinalReservoirPct, req.FinalWaterPurityPct, req.TotalLitersSaved,
+			req.TotalLitersReused, req.TotalLitersRecycled, req.DurationSeconds, startedAt,
+		)
+		if err != nil {
+			return err
+		}
+
+		// Insertar estadísticas por jugador y actualizar perfiles para el Leaderboard
+		for _, p := range req.Players {
+			statQuery := `INSERT INTO match_player_stats (
+				match_id, user_id, username, role_played, repairs_done,
+				water_saved_liters, water_recycled_liters, individual_points
+			) VALUES ($1, NULLIF($2, ''), $3, $4, $5, $6, $7, $8)`
+
+			_, _ = tx.ExecContext(ctx, statQuery, matchID, p.UserID, p.Username, p.RolePlayed, p.RepairsDone,
+				p.WaterSavedLiters, p.WaterRecycledLiters, p.IndividualPoints)
+
+			// Actualizar ranking acumulativo en tabla users si existe el usuario
+			if p.UserID != "" {
+				wonIncrement := 0
+				if req.IsVictory {
+					wonIncrement = 1
+				}
+				updateUserQuery := `UPDATE users
+					SET games_played = games_played + 1,
+					    games_won = games_won + $1,
+					    total_eco_score = total_eco_score + $2,
+					    updated_at = NOW()
+					WHERE id = $3`
+				_, _ = tx.ExecContext(ctx, updateUserQuery, wonIncrement, p.IndividualPoints, p.UserID)
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+
+		log.Printf("[LEADERBOARD SUCCESS] Partida %s persistida con éxito en PostgreSQL (%d jugadores)", matchID, len(req.Players))
+		return nil
 	}
 
-	if err := tx.Commit(); err != nil {
-		log.Printf("[LEADERBOARD ERROR] Error al confirmar transacción: %v", err)
+	var err error
+	if s.cb != nil {
+		err = s.cb.Execute(persistFunc)
+	} else {
+		err = persistFunc()
+	}
+
+	if err != nil {
+		log.Printf("[LEADERBOARD ERROR] Error persistiendo partida (Circuit Breaker activo): %v", err)
 		return
 	}
-
-	log.Printf("[LEADERBOARD SUCCESS] Partida %s persistida con éxito en PostgreSQL (%d jugadores)", matchID, len(req.Players))
 
 	// Notificar al pool de auditoría asíncrono
 	if s.auditPool != nil {
@@ -211,13 +236,20 @@ func (s *Service) processMatchPersistence(req RecordMatchReq) {
 			EventType:   "MATCH_FINISHED_RECORDED",
 			Severity:    "INFO",
 			Payload: map[string]interface{}{
-				"match_id":    matchID,
 				"room_code":   req.RoomCode,
 				"final_score": req.FinalScore,
 				"is_victory":  req.IsVictory,
 			},
 			CreatedAt: time.Now(),
 		})
+	}
+}
+
+func (s *Service) getDegradedLeaderboard() []LeaderboardEntry {
+	return []LeaderboardEntry{
+		{Rank: 1, UserID: "usr_eco_bot_01", Username: "EcoBot01", TotalEcoScore: 8900.0, GamesPlayed: 20, GamesWon: 15, WinRatePct: 75.0, Role: 4},
+		{Rank: 2, UserID: "usr_victor_admin", Username: "VictorAdmin", TotalEcoScore: 4500.0, GamesPlayed: 10, GamesWon: 8, WinRatePct: 80.0, Role: 2},
+		{Rank: 3, UserID: "usr_plumber_hero", Username: "PlumberHero", TotalEcoScore: 2100.0, GamesPlayed: 5, GamesWon: 4, WinRatePct: 80.0, Role: 1},
 	}
 }
 
@@ -235,57 +267,76 @@ func (s *Service) GetLeaderboardHandler(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	if s.db == nil {
-		// Modo mock / fallback si la DB está degradada
-		mockEntries := []LeaderboardEntry{
-			{Rank: 1, UserID: "usr_eco_bot_01", Username: "EcoBot01", TotalEcoScore: 8900.0, GamesPlayed: 20, GamesWon: 15, WinRatePct: 75.0, Role: 4},
-			{Rank: 2, UserID: "usr_victor_admin", Username: "VictorAdmin", TotalEcoScore: 4500.0, GamesPlayed: 10, GamesWon: 8, WinRatePct: 80.0, Role: 2},
-			{Rank: 3, UserID: "usr_plumber_hero", Username: "PlumberHero", TotalEcoScore: 2100.0, GamesPlayed: 5, GamesWon: 4, WinRatePct: 80.0, Role: 1},
-		}
+	// Si no hay DB o el circuit breaker está abierto, activar degradación elegante inmediata (Fail Fast)
+	if s.db == nil || (s.cb != nil && s.cb.State() == circuitbreaker.StateOpen) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success":     true,
-			"leaderboard": mockEntries,
-			"source":      "mock_degraded_mode",
+			"leaderboard": s.getDegradedLeaderboard(),
+			"source":      "circuit_breaker_degraded_mode",
 		})
 		return
 	}
 
-	query := `SELECT id, username, total_eco_score, games_played, games_won, default_role
-	          FROM users
-	          ORDER BY total_eco_score DESC, games_won DESC
-	          LIMIT $1`
-
-	rows, err := s.db.Query(query, limit)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error consultando leaderboard: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
 	var entries []LeaderboardEntry
-	rank := 1
-	for rows.Next() {
-		var id, username string
-		var score float64
-		var played, won, role int
-		if err := rows.Scan(&id, &username, &score, &played, &won, &role); err == nil {
-			winRate := 0.0
-			if played > 0 {
-				winRate = (float64(won) / float64(played)) * 100.0
-			}
-			entries = append(entries, LeaderboardEntry{
-				Rank:          rank,
-				UserID:        id,
-				Username:      username,
-				TotalEcoScore: score,
-				GamesPlayed:   played,
-				GamesWon:      won,
-				WinRatePct:    winRate,
-				Role:          role,
-			})
-			rank++
+	queryFunc := func() error {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		query := `SELECT id, username, total_eco_score, games_played, games_won, default_role
+		          FROM users
+		          ORDER BY total_eco_score DESC, games_won DESC
+		          LIMIT $1`
+
+		rows, err := s.db.QueryContext(ctx, query, limit)
+		if err != nil {
+			return err
 		}
+		defer rows.Close()
+
+		rank := 1
+		for rows.Next() {
+			var id, username string
+			var score float64
+			var played, won, role int
+			if err := rows.Scan(&id, &username, &score, &played, &won, &role); err == nil {
+				winRate := 0.0
+				if played > 0 {
+					winRate = (float64(won) / float64(played)) * 100.0
+				}
+				entries = append(entries, LeaderboardEntry{
+					Rank:          rank,
+					UserID:        id,
+					Username:      username,
+					TotalEcoScore: score,
+					GamesPlayed:   played,
+					GamesWon:      won,
+					WinRatePct:    winRate,
+					Role:          role,
+				})
+				rank++
+			}
+		}
+		return rows.Err()
+	}
+
+	var err error
+	if s.cb != nil {
+		err = s.cb.Execute(queryFunc)
+	} else {
+		err = queryFunc()
+	}
+
+	if err != nil {
+		// Fallback automático por fallo de base de datos
+		log.Printf("[LEADERBOARD WARN] Error consultando DB (%v), respondiendo con fallback resiliente", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":     true,
+			"leaderboard": s.getDegradedLeaderboard(),
+			"source":      "circuit_breaker_degraded_mode",
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
@@ -293,6 +344,24 @@ func (s *Service) GetLeaderboardHandler(w http.ResponseWriter, r *http.Request) 
 		"success":     true,
 		"leaderboard": entries,
 	})
+}
+
+func (s *Service) getDegradedHistory() []MatchHistoryEntry {
+	return []MatchHistoryEntry{
+		{
+			MatchID:             "mtc_demo_01",
+			RoomCode:            "AGUA42",
+			IsVictory:           true,
+			EndReason:           "Tiempo completado - Embalse preservado",
+			FinalScore:          1450,
+			FinalReservoirPct:   78.5,
+			TotalLitersSaved:    320.0,
+			TotalLitersReused:   150.0,
+			TotalLitersRecycled: 100.0,
+			DurationSeconds:     180,
+			FinishedAt:          time.Now().Add(-10 * time.Minute),
+		},
+	}
 }
 
 // Handler GET /api/v1/matches/history
@@ -309,67 +378,75 @@ func (s *Service) GetMatchHistoryHandler(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	if s.db == nil {
-		mockHistory := []MatchHistoryEntry{
-			{
-				MatchID:             "mtc_demo_01",
-				RoomCode:            "AGUA42",
-				IsVictory:           true,
-				EndReason:           "Tiempo completado - Embalse preservado",
-				FinalScore:          1450,
-				FinalReservoirPct:   78.5,
-				TotalLitersSaved:    320.0,
-				TotalLitersReused:   150.0,
-				TotalLitersRecycled: 100.0,
-				DurationSeconds:     180,
-				FinishedAt:          time.Now().Add(-10 * time.Minute),
-			},
-		}
+	if s.db == nil || (s.cb != nil && s.cb.State() == circuitbreaker.StateOpen) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"success": true,
-			"matches": mockHistory,
-			"source":  "mock_degraded_mode",
+			"matches": s.getDegradedHistory(),
+			"source":  "circuit_breaker_degraded_mode",
 		})
 		return
 	}
 
-	query := `SELECT id, room_code, is_victory, end_reason, final_score,
-	                 final_reservoir_pct, total_liters_saved, total_liters_reused,
-	                 total_liters_recycled, duration_seconds, finished_at
-	          FROM matches
-	          ORDER BY finished_at DESC
-	          LIMIT $1`
-
-	rows, err := s.db.Query(query, limit)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("Error consultando historial: %v", err), http.StatusInternalServerError)
-		return
-	}
-	defer rows.Close()
-
 	var history []MatchHistoryEntry
-	for rows.Next() {
-		var id, code, reason string
-		var victory bool
-		var score, dur int
-		var res, saved, reused, recycled float64
-		var finished time.Time
-		if err := rows.Scan(&id, &code, &victory, &reason, &score, &res, &saved, &reused, &recycled, &dur, &finished); err == nil {
-			history = append(history, MatchHistoryEntry{
-				MatchID:             id,
-				RoomCode:            code,
-				IsVictory:           victory,
-				EndReason:           reason,
-				FinalScore:          score,
-				FinalReservoirPct:   res,
-				TotalLitersSaved:    saved,
-				TotalLitersReused:   reused,
-				TotalLitersRecycled: recycled,
-				DurationSeconds:     dur,
-				FinishedAt:          finished,
-			})
+	queryFunc := func() error {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
+
+		query := `SELECT id, room_code, is_victory, end_reason, final_score,
+		                 final_reservoir_pct, total_liters_saved, total_liters_reused,
+		                 total_liters_recycled, duration_seconds, finished_at
+		          FROM matches
+		          ORDER BY finished_at DESC
+		          LIMIT $1`
+
+		rows, err := s.db.QueryContext(ctx, query, limit)
+		if err != nil {
+			return err
 		}
+		defer rows.Close()
+
+		for rows.Next() {
+			var id, code, reason string
+			var victory bool
+			var score, dur int
+			var res, saved, reused, recycled float64
+			var finished time.Time
+			if err := rows.Scan(&id, &code, &victory, &reason, &score, &res, &saved, &reused, &recycled, &dur, &finished); err == nil {
+				history = append(history, MatchHistoryEntry{
+					MatchID:             id,
+					RoomCode:            code,
+					IsVictory:           victory,
+					EndReason:           reason,
+					FinalScore:          score,
+					FinalReservoirPct:   res,
+					TotalLitersSaved:    saved,
+					TotalLitersReused:   reused,
+					TotalLitersRecycled: recycled,
+					DurationSeconds:     dur,
+					FinishedAt:          finished,
+				})
+			}
+		}
+		return rows.Err()
+	}
+
+	var err error
+	if s.cb != nil {
+		err = s.cb.Execute(queryFunc)
+	} else {
+		err = queryFunc()
+	}
+
+	if err != nil {
+		log.Printf("[HISTORY WARN] Error consultando DB (%v), respondiendo con fallback resiliente", err)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"matches": s.getDegradedHistory(),
+			"source":  "circuit_breaker_degraded_mode",
+		})
+		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")

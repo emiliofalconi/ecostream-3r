@@ -69,6 +69,51 @@ func (cb *CircuitBreaker) Execute(fn func() error) error {
 	return nil
 }
 
+// ExecuteWithFallback ejecuta la función protegida y llama a un fallback si el circuito está abierto o falla.
+func (cb *CircuitBreaker) ExecuteWithFallback(fn func() error, fallback func(err error) error) error {
+	err := cb.Execute(fn)
+	if err != nil {
+		if fallback != nil {
+			return fallback(err)
+		}
+		return err
+	}
+	return nil
+}
+
+// Trip activa manualmente el circuito a StateOpen (para simulaciones de caos o fallos)
+func (cb *CircuitBreaker) Trip() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.state = StateOpen
+	cb.lastFailure = time.Now()
+	cb.failures = cb.maxFailures
+}
+
+// Reset restablece el circuito a StateClosed
+func (cb *CircuitBreaker) Reset() {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	cb.state = StateClosed
+	cb.failures = 0
+}
+
+func (cb *CircuitBreaker) State() State {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.state
+}
+
+func (cb *CircuitBreaker) Failures() int {
+	cb.mu.Lock()
+	defer cb.mu.Unlock()
+	return cb.failures
+}
+
+func (cb *CircuitBreaker) Name() string {
+	return cb.name
+}
+
 func (cb *CircuitBreaker) GetState() string {
 	cb.mu.Lock()
 	defer cb.mu.Unlock()

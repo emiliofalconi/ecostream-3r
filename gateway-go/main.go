@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"log"
 	"net/http"
 	"os"
@@ -50,20 +51,27 @@ func main() {
 	db, err := database.Connect(cfg.DatabaseURL)
 	if err != nil {
 		log.Printf("[DATABASE WARN] Arrancando con base de datos en modo degradado: %v", err)
+	} else if db != nil {
+		db.WithBreaker(dbCB)
+	}
+
+	var sqlDB *sql.DB
+	if db != nil && db.DB != nil {
+		sqlDB = db.DB
 	}
 
 	// 3. Iniciar Worker Pool de Goroutines para Auditoría
 	var auditPool *workers.AuditWorkerPool
-	if db != nil && db.DB != nil {
-		auditPool = workers.NewAuditWorkerPool(db.DB, 5, 100)
+	if sqlDB != nil {
+		auditPool = workers.NewAuditWorkerPool(sqlDB, 5, 100)
 		auditPool.Start()
 		defer auditPool.Stop()
 	}
 
-	// 4. Inicializar Servicios
-	authService := auth.NewService(db.DB, cfg.JWTSecret, cfg.JWTExpirationHours)
-	matchmakingService := matchmaking.NewService(db.DB, authService, cfg.SimulationWorker)
-	leaderboardService := leaderboard.NewService(db.DB, authService, auditPool)
+	// 4. Inicializar Servicios protegidos con Circuit Breaker y Timeouts
+	authService := auth.NewService(sqlDB, cfg.JWTSecret, cfg.JWTExpirationHours, dbCB)
+	matchmakingService := matchmaking.NewService(sqlDB, authService, cfg.SimulationWorker, dbCB)
+	leaderboardService := leaderboard.NewService(sqlDB, authService, auditPool, dbCB)
 	healthHandler := health.NewHandler(db, dbCB, rustCB)
 	swaggerHandler := swagger.NewHandler("docs/swagger/openapi.json")
 
