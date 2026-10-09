@@ -14,7 +14,8 @@
   "tags": [
     { "name": "Health", "description": "Endpoints de sondeo y vitalidad (Liveness & Readiness)" },
     { "name": "Auth", "description": "Registro, inicio de sesión y validación JWT" },
-    { "name": "Matchmaking", "description": "Creación, unión y consulta de salas/lobbies" }
+    { "name": "Matchmaking", "description": "Creación, unión y consulta de salas/lobbies" },
+    { "name": "Leaderboard", "description": "Clasificación global de jugadores e historial de partidas" }
   ],
   "paths": {
     "/healthz": {
@@ -194,6 +195,77 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/v1/rooms/join": {
+      "post": {
+        "tags": ["Matchmaking"],
+        "summary": "Unirse a sala existente por código",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["token", "room_code"],
+                "properties": {
+                  "token": { "type": "string" },
+                  "room_code": { "type": "string", "example": "AGUA42" },
+                  "selected_role": { "type": "integer", "example": 2 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Unido a la sala con éxito" },
+          "404": { "description": "Sala no encontrada" },
+          "409": { "description": "Sala llena" }
+        }
+      }
+    },
+    "/api/v1/leaderboard": {
+      "get": {
+        "tags": ["Leaderboard"],
+        "summary": "Consultar ranking global de jugadores (Top Eco-Score)",
+        "parameters": [
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 10 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lista ordenada de jugadores por puntaje ecológico",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "leaderboard": [
+                    { "rank": 1, "username": "EcoBot01", "total_eco_score": 8900.0, "games_won": 15, "win_rate_pct": 75.0 },
+                    { "rank": 2, "username": "VictorAdmin", "total_eco_score": 4500.0, "games_won": 8, "win_rate_pct": 80.0 }
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/matches/finish": {
+      "post": {
+        "tags": ["Leaderboard"],
+        "summary": "Registrar final de partida (Persistencia asíncrona en Worker Pool)",
+        "description": "Despacha el guardado en segundo plano sin bloquear la API.",
+        "responses": {
+          "202": { "description": "Partida aceptada y encolada en Goroutine" }
+        }
+      }
+    },
+    "/api/v1/matches/history": {
+      "get": {
+        "tags": ["Leaderboard"],
+        "summary": "Historial de partidas finalizadas y litros salvados",
+        "responses": {
+          "200": { "description": "Historial de partidas" }
         }
       }
     }

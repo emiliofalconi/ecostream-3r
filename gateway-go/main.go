@@ -14,6 +14,7 @@ import (
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/config"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/database"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/health"
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/leaderboard"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/matchmaking"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/swagger"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workers"
@@ -62,6 +63,7 @@ func main() {
 	// 4. Inicializar Servicios
 	authService := auth.NewService(db.DB, cfg.JWTSecret, cfg.JWTExpirationHours)
 	matchmakingService := matchmaking.NewService(db.DB, authService, cfg.SimulationWorker)
+	leaderboardService := leaderboard.NewService(db.DB, authService, auditPool)
 	healthHandler := health.NewHandler(db, dbCB, rustCB)
 	swaggerHandler := swagger.NewHandler("docs/swagger/openapi.json")
 
@@ -89,6 +91,11 @@ func main() {
 		}
 	})
 	mux.HandleFunc("/api/v1/rooms/join", matchmakingService.JoinRoomHandler)
+
+	// API REST de Partidas y Leaderboards (No bloqueante con Goroutines)
+	mux.HandleFunc("/api/v1/leaderboard", leaderboardService.GetLeaderboardHandler)
+	mux.HandleFunc("/api/v1/matches/finish", leaderboardService.FinishMatchHandler)
+	mux.HandleFunc("/api/v1/matches/history", leaderboardService.GetMatchHistoryHandler)
 
 	// 6. Servidor HTTP
 	server := &http.Server{

@@ -130,13 +130,36 @@ impl GameRoomSimulation {
         ticket
     }
 
-    /// Aplicar acción despachada por el cliente
+    /// Distancia euclidiana entre dos puntos 2D
+    fn distance(p1: &Vector2D, p2: &Vector2D) -> f32 {
+        let dx = p1.x - p2.x;
+        let dy = p1.y - p2.y;
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    /// Aplicar acción despachada por el cliente con Validación Autoritativa (Anti-Cheat)
     pub fn apply_action(&mut self, player_id: &str, action: PlayerAction) {
+        let player_pos = match self.players.get(player_id).and_then(|p| p.position.clone()) {
+            Some(pos) => pos,
+            None => return,
+        };
+
         if let Some(action_type) = action.action_type {
             match action_type {
-                // 1. REDUCIR: Reparación de fugas a presión
+                // 1. REDUCIR: Reparación de fugas a presión (Validación de proximidad <= 15.0 unidades)
                 player_action::ActionType::RepairPipe(repair) => {
                     if let Some(pipe) = self.pipes.iter_mut().find(|p| p.pipe_id == repair.pipe_id) {
+                        if let Some(ref pipe_pos) = pipe.position {
+                            let dist = Self::distance(&player_pos, pipe_pos);
+                            const MAX_INTERACT_DISTANCE: f32 = 18.0;
+
+                            if dist > MAX_INTERACT_DISTANCE {
+                                println!("[ANTI-CHEAT REJECT] Jugador {} intentó reparar tubería #{} a distancia sospechosa: {:.2} (Max: {:.2})",
+                                    player_id, repair.pipe_id, dist, MAX_INTERACT_DISTANCE);
+                                return;
+                            }
+                        }
+
                         pipe.repair_progress_pct = (pipe.repair_progress_pct + repair.repair_progress_delta).min(100.0);
                         if pipe.repair_progress_pct >= 100.0 && pipe.is_leaking {
                             pipe.is_leaking = false;
@@ -146,12 +169,22 @@ impl GameRoomSimulation {
                             if let Some(p) = self.players.get_mut(player_id) {
                                 p.current_score += 150;
                             }
+                            println!("[SIMULATION] Tubería #{} sellada por jugador {}", repair.pipe_id, player_id);
                         }
                     }
                 }
-                // 2. REUSAR: Desvío de compuertas hacia huertos
+                // 2. REUSAR: Desvío de compuertas hacia huertos (Validación de proximidad <= 18.0 unidades)
                 player_action::ActionType::DivertValve(divert) => {
                     if let Some(valve) = self.valves.iter_mut().find(|v| v.valve_id == divert.valve_id) {
+                        if let Some(ref valve_pos) = valve.position {
+                            let dist = Self::distance(&player_pos, valve_pos);
+                            const MAX_VALVE_DISTANCE: f32 = 20.0;
+                            if dist > MAX_VALVE_DISTANCE {
+                                println!("[ANTI-CHEAT REJECT] Jugador {} intentó desviar válvula #{} fuera de alcance: {:.2}", player_id, divert.valve_id, dist);
+                                return;
+                            }
+                        }
+
                         valve.current_destination = divert.destination;
                         if divert.destination == WaterDestination::DestinationIrrigation as i32 {
                             self.total_liters_reused += 20.0;
@@ -159,9 +192,18 @@ impl GameRoomSimulation {
                         }
                     }
                 }
-                // 3. RECICLAR: Planta biológica de filtración
+                // 3. RECICLAR: Planta biológica de filtración (Validación de proximidad <= 25.0 unidades)
                 player_action::ActionType::OperateRecycle(recycle) => {
                     if let Some(plant) = self.plants.iter_mut().find(|pl| pl.plant_id == recycle.plant_id) {
+                        if let Some(ref plant_pos) = plant.position {
+                            let dist = Self::distance(&player_pos, plant_pos);
+                            const MAX_PLANT_DISTANCE: f32 = 28.0;
+                            if dist > MAX_PLANT_DISTANCE {
+                                println!("[ANTI-CHEAT REJECT] Jugador {} intentó operar planta fuera de rango: {:.2}", player_id, dist);
+                                return;
+                            }
+                        }
+
                         plant.filter_health_pct = 100.0;
                         plant.sludge_level_pct = (plant.sludge_level_pct - 30.0).max(0.0);
                         self.total_liters_recycled += 50.0;
@@ -169,11 +211,27 @@ impl GameRoomSimulation {
                         self.team_score += 100;
                     }
                 }
-                // Movimiento del avatar
+                // Movimiento del avatar: Validación Anti-Speedhack autoritativa
                 player_action::ActionType::Move(mv) => {
                     if let Some(p) = self.players.get_mut(player_id) {
-                        p.position = mv.target_position;
-                        p.velocity = mv.velocity;
+                        if let (Some(ref current_pos), Some(ref target_pos)) = (&p.position, &mv.target_position) {
+                            let delta = Self::distance(current_pos, target_pos);
+                            // En 50ms (1 tick), un jugador normal puede moverse como máximo ~8.0 unidades
+                            const MAX_MOVE_SPEED_PER_TICK: f32 = 8.5;
+
+                            if delta > MAX_MOVE_SPEED_PER_TICK {
+                                println!("[ANTI-CHEAT SPEEDHACK] Jugador {} movimiento bloqueado: delta {:.2} supera límite ({:.2})",
+                                    player_id, delta, MAX_MOVE_SPEED_PER_TICK);
+                                // Rechazar teletransporte: se descarta el target o se acota
+                                return;
+                            }
+
+                            p.position = Some(target_pos.clone());
+                            p.velocity = mv.velocity;
+                        } else {
+                            p.position = mv.target_position;
+                            p.velocity = mv.velocity;
+                        }
                     }
                 }
                 _ => {}
@@ -185,7 +243,60 @@ impl GameRoomSimulation {
     pub fn update_tick(&mut self) -> GameWorldState {
         self.tick += 1;
 
-        // Drenaje continuo del embalse según fugas y demanda
+        // ----------------------------------------------------------------------
+        // 1. GESTIÓN DE EVENTOS CLIMÁTICOS Y AMBIENTALES DINÁMICOS
+        // ----------------------------------------------------------------------
+        // Disparar evento dinámico aleatorio periódicamente (cada ~30 seg = 600 ticks)
+        if self.tick % 600 == 0 && self.active_events.is_empty() {
+            let event_choice = (self.tick / 600) % 2;
+            if event_choice == 0 {
+                // Evento: OLA DE CALOR (Heatwave)
+                self.active_events.push(ActiveEvent {
+                    event_id: 101,
+                    event_type: active_event::EventType::Heatwave as i32,
+                    title: "🔥 ¡OLA DE CALOR SEVERA!".to_string(),
+                    description: "La demanda de agua comunal se duplica por 20 segundos. ¡Racionen y reparen fugas!".to_string(),
+                    remaining_seconds: 20,
+                    severity_multiplier: 2.2,
+                });
+                println!("[CLIMA EVENTO] ¡Inició OLA DE CALOR en la sala {}! Drenaje x2.2", self.room_id);
+            } else {
+                // Evento: LLUVIA TORRENCIAL Y CAPTACIÓN
+                self.active_events.push(ActiveEvent {
+                    event_id: 102,
+                    event_type: active_event::EventType::RainHarvest as i32,
+                    title: "🌧️ ¡LLUVIA TORRENCIAL ECO!".to_string(),
+                    description: "Captación de agua de lluvia activa. El embalse recupera volumen durante 15 segundos.".to_string(),
+                    remaining_seconds: 15,
+                    severity_multiplier: 1.5,
+                });
+                println!("[CLIMA EVENTO] ¡Inició LLUVIA TORRENCIAL en la sala {}!", self.room_id);
+            }
+        }
+
+        // Procesar temporizador de eventos climáticos activos (cada 20 ticks = 1 seg)
+        if self.tick % 20 == 0 && !self.active_events.is_empty() {
+            for ev in &mut self.active_events {
+                ev.remaining_seconds = ev.remaining_seconds.saturating_sub(1);
+            }
+            self.active_events.retain(|ev| ev.remaining_seconds > 0);
+        }
+
+        // Calcular multiplicador climático de consumo
+        let mut climate_drain_multiplier = 1.0f32;
+        let mut rain_inflow = 0.0f32;
+
+        for ev in &self.active_events {
+            if ev.event_type == active_event::EventType::Heatwave as i32 {
+                climate_drain_multiplier = ev.severity_multiplier; // Duplica consumo
+            } else if ev.event_type == active_event::EventType::RainHarvest as i32 {
+                rain_inflow = 0.035 * ev.severity_multiplier; // Recarga embalse
+            }
+        }
+
+        // ----------------------------------------------------------------------
+        // 2. SIMULACIÓN DE FLUJO HÍDRICO Y BALANCE DEL EMBALSE
+        // ----------------------------------------------------------------------
         let mut total_leak_rate = 0.0;
         for pipe in &self.pipes {
             if pipe.is_leaking {
@@ -193,8 +304,12 @@ impl GameRoomSimulation {
             }
         }
 
-        let drainage_per_tick = 0.005 + (total_leak_rate * 0.001);
-        self.reservoir_level_pct = (self.reservoir_level_pct - drainage_per_tick).max(0.0);
+        let base_drainage = 0.005 + (total_leak_rate * 0.001);
+        let effective_drainage = base_drainage * climate_drain_multiplier;
+
+        // Nivel del embalse: Drenaje + Aportes de lluvia
+        self.reservoir_level_pct = ((self.reservoir_level_pct - effective_drainage) + rain_inflow)
+            .clamp(0.0, 100.0);
 
         // Generar fuga aleatoria cada 200 ticks (~10 seg) si no hay demasiadas
         if self.tick % 200 == 0 {
@@ -202,10 +317,13 @@ impl GameRoomSimulation {
                 pipe.is_leaking = true;
                 pipe.leak_rate_liters_sec = 6.0;
                 pipe.repair_progress_pct = 0.0;
+                println!("[SIMULATION] ¡Nueva fuga aleatoria detectada en Tubería #{}!", pipe.pipe_id);
             }
         }
 
-        // Construir métricas
+        // ----------------------------------------------------------------------
+        // 3. CONSTRUCCIÓN DE MÉTRICAS Y SNAPSHOT PARA EL CLIENTE
+        // ----------------------------------------------------------------------
         let metrics = WaterMetrics {
             reservoir_level_pct: (self.reservoir_level_pct * 100.0).round() / 100.0,
             water_purity_pct: (self.water_purity_pct * 100.0).round() / 100.0,
