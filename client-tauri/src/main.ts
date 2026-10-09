@@ -798,7 +798,7 @@ updateHUD();
 // ==========================================================================
 // INTEGRACIÓN CON GO GATEWAY (API REST & MATCHMAKING)
 // ==========================================================================
-const GATEWAY_BASE = 'http://localhost:8080';
+let gatewayBaseUrl = 'http://localhost:8080';
 
 const session = {
   token: '',
@@ -817,6 +817,7 @@ const btnCloseLobby = document.getElementById('btnCloseLobby');
 const gatewayStatusDot = document.getElementById('gatewayStatusDot');
 const gatewayStatusText = document.getElementById('gatewayStatusText');
 const inputUsername = document.getElementById('inputUsername') as HTMLInputElement | null;
+const inputGatewayHost = document.getElementById('inputGatewayHost') as HTMLInputElement | null;
 const selectRole = document.getElementById('selectRole') as HTMLSelectElement | null;
 const btnCreateRoomGo = document.getElementById('btnCreateRoomGo');
 const inputRoomCode = document.getElementById('inputRoomCode') as HTMLInputElement | null;
@@ -825,6 +826,17 @@ const btnRefreshRooms = document.getElementById('btnRefreshRooms');
 const roomsListContainer = document.getElementById('roomsListContainer');
 const roomDot = document.getElementById('roomDot');
 const txtRoomCode = document.getElementById('txtRoomCode');
+
+function getActiveGatewayUrl(): string {
+  if (inputGatewayHost && inputGatewayHost.value.trim()) {
+    let val = inputGatewayHost.value.trim();
+    if (!val.startsWith('http://') && !val.startsWith('https://')) {
+      val = 'http://' + val;
+    }
+    gatewayBaseUrl = val;
+  }
+  return gatewayBaseUrl;
+}
 
 function toggleLobby(show: boolean) {
   if (!lobbyModal) return;
@@ -840,17 +852,23 @@ function toggleLobby(show: boolean) {
 btnOpenLobby?.addEventListener('click', () => toggleLobby(true));
 btnCloseLobby?.addEventListener('click', () => toggleLobby(false));
 
+inputGatewayHost?.addEventListener('change', () => {
+  checkGatewayHealth();
+  fetchRoomsList();
+});
+
 // Verificar Salud del Gateway Go (/healthz)
 async function checkGatewayHealth() {
+  const base = getActiveGatewayUrl();
   try {
-    const res = await fetch(`${GATEWAY_BASE}/healthz`, { method: 'GET' });
+    const res = await fetch(`${base}/healthz`, { method: 'GET' });
     if (res.ok) {
       session.isOnline = true;
       if (gatewayStatusDot) {
         gatewayStatusDot.className = 'status-indicator online';
       }
       if (gatewayStatusText) {
-        gatewayStatusText.textContent = '🟢 Go Gateway Online (:8080) - Matchmaking Listo';
+        gatewayStatusText.textContent = `🟢 Conectado: ${base} (:8080) - Listo`;
       }
     } else {
       throw new Error('Status no OK');
@@ -861,19 +879,20 @@ async function checkGatewayHealth() {
       gatewayStatusDot.className = 'status-indicator offline';
     }
     if (gatewayStatusText) {
-      gatewayStatusText.textContent = '🔴 Go Gateway Desconectado. (Inicia el servidor en :8080)';
+      gatewayStatusText.textContent = `🔴 Servidor Inaccesible en ${base}. Verifica la IP pública o Docker.`;
     }
   }
 }
 
 // Obtener o Generar Token JWT de Sesión
 async function getOrFetchToken(): Promise<string> {
+  const base = getActiveGatewayUrl();
   const username = inputUsername?.value.trim() || 'Guardián_1';
   session.username = username;
   session.role = parseInt(selectRole?.value || '4');
 
   try {
-    const loginRes = await fetch(`${GATEWAY_BASE}/api/v1/auth/login`, {
+    const loginRes = await fetch(`${base}/api/v1/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -901,11 +920,12 @@ async function getOrFetchToken(): Promise<string> {
 
 // Crear Sala en Go Gateway (POST /api/v1/rooms)
 async function handleCreateRoom() {
+  const base = getActiveGatewayUrl();
   const token = await getOrFetchToken();
   const roomName = `Sala Eco de ${session.username}`;
 
   try {
-    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms`, {
+    const res = await fetch(`${base}/api/v1/rooms`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -940,6 +960,7 @@ async function handleCreateRoom() {
 
 // Unirse a Sala por Código en Go Gateway (POST /api/v1/rooms/join)
 async function handleJoinRoom() {
+  const base = getActiveGatewayUrl();
   const code = inputRoomCode?.value.trim().toUpperCase();
   if (!code) {
     showToast('Ingresa un código de sala (ej: AGUA-12AB)', 'reduce');
@@ -949,7 +970,7 @@ async function handleJoinRoom() {
   const token = await getOrFetchToken();
 
   try {
-    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms/join`, {
+    const res = await fetch(`${base}/api/v1/rooms/join`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -980,11 +1001,12 @@ async function handleJoinRoom() {
 
 // Consultar Lista de Salas Activas (GET /api/v1/rooms)
 async function fetchRoomsList() {
+  const base = getActiveGatewayUrl();
   if (!roomsListContainer) return;
   roomsListContainer.innerHTML = '<div class="room-empty">Consultando salas activas...</div>';
 
   try {
-    const res = await fetch(`${GATEWAY_BASE}/api/v1/rooms`, { method: 'GET' });
+    const res = await fetch(`${base}/api/v1/rooms`, { method: 'GET' });
     const data = await res.json();
 
     if (data.success && data.rooms && data.rooms.length > 0) {
