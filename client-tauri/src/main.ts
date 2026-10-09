@@ -57,6 +57,39 @@ interface Shockwave {
   lineWidth: number;
 }
 
+interface EcoCollectible {
+  id: number;
+  x: number;
+  y: number;
+  type: 'kit' | 'droplet' | 'speed';
+  life: number;
+  pulse: number;
+}
+
+interface EcoThreat {
+  id: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  pulse: number;
+}
+
+interface ActiveChaosEvent {
+  type: 'heatwave' | 'burst' | 'rain';
+  title: string;
+  duration: number;
+  maxDuration: number;
+}
+
+interface Afterimage {
+  x: number;
+  y: number;
+  angle: number;
+  alpha: number;
+}
+
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 
@@ -64,7 +97,14 @@ const ctx = canvas.getContext('2d')!;
 const particles: Particle[] = [];
 const floatingTexts: FloatingText[] = [];
 const shockwaves: Shockwave[] = [];
+const afterimages: Afterimage[] = [];
+const collectibles: EcoCollectible[] = [];
+const threats: EcoThreat[] = [];
 let screenShake = 0;
+let nextCollectibleId = 1;
+let nextThreatId = 1;
+let collectibleSpawnTimer = 4.0;
+let threatSpawnTimer = 7.0;
 
 function triggerScreenShake(intensity: number) {
   screenShake = Math.max(screenShake, intensity);
@@ -83,13 +123,26 @@ const state = {
   score: 0,
   isGameOver: false,
   hasWon: false,
+  combo: {
+    count: 0,
+    timer: 0,
+  },
+  activeChaos: null as ActiveChaosEvent | null,
+  chaosTimer: 20.0, // Próximo evento dinámico
   player: {
     x: 420,
     y: 320,
-    targetX: 420,
-    targetY: 320,
+    vx: 0,
+    vy: 0,
+    targetX: null as number | null,
+    targetY: null as number | null,
     angle: 0,
     isWrenching: false,
+    walkCycle: 0,
+    isDashing: false,
+    dashTimer: 0,
+    dashCooldown: 0,
+    speedBuffTimer: 0,
   },
   pipes: [
     { id: 1, x: 300, y: 150, w: 220, h: 26, isLeaking: false, repairProgress: 100 },
@@ -122,11 +175,19 @@ function resizeCanvas() {
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Controles de Teclado
-const keys: Record<string, boolean> = {};
+// ==========================================================================
+// CONTROLES DE TECLADO FLUIDOS (POLLING CONTINUO CON SET & NORMALIZACIÓN)
+// ==========================================================================
+const activeKeys = new Set<string>();
+
 window.addEventListener('keydown', (e) => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.code === 'Space') {
+  activeKeys.add(e.code);
+  activeKeys.add(e.key.toLowerCase());
+
+  // Tecla SHIFT: Activar Dash / Impulso Rápido
+  if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.key.toLowerCase() === 'shift') {
+    triggerDash();
+  } else if (e.code === 'Space') {
     e.preventDefault();
     actionReduce();
   } else if (e.key.toLowerCase() === 'r') {
@@ -135,9 +196,76 @@ window.addEventListener('keydown', (e) => {
     actionRecycle();
   }
 });
+
 window.addEventListener('keyup', (e) => {
-  keys[e.key.toLowerCase()] = false;
+  activeKeys.delete(e.code);
+  activeKeys.delete(e.key.toLowerCase());
 });
+
+// Limpiar teclas si la ventana pierde el foco (evita teclas pegadas)
+window.addEventListener('blur', () => {
+  activeKeys.clear();
+});
+
+function isKeyPressed(...codes: string[]): boolean {
+  for (const c of codes) {
+    if (activeKeys.has(c)) return true;
+  }
+  return false;
+}
+
+// Activación del Dash / Impulso Rápido
+function triggerDash() {
+  const p = state.player;
+  if (p.dashCooldown > 0 || p.isDashing) return;
+
+  p.isDashing = true;
+  p.dashTimer = 0.20; // 200ms de aceleración extrema
+  p.dashCooldown = 0.95; // 0.95s de cooldown
+
+  // Dirección hacia donde se mueve o mira
+  let dashDx = Math.cos(p.angle);
+  let dashDy = Math.sin(p.angle);
+
+  // Si hay teclas activas en este instante, orientar el dash en esa dirección
+  let moveDx = 0;
+  let moveDy = 0;
+  if (isKeyPressed('KeyW', 'ArrowUp', 'w')) moveDy -= 1;
+  if (isKeyPressed('KeyS', 'ArrowDown', 's')) moveDy += 1;
+  if (isKeyPressed('KeyA', 'ArrowLeft', 'a')) moveDx -= 1;
+  if (isKeyPressed('KeyD', 'ArrowRight', 'd')) moveDx += 1;
+
+  if (moveDx !== 0 || moveDy !== 0) {
+    const len = Math.hypot(moveDx, moveDy);
+    dashDx = moveDx / len;
+    dashDy = moveDy / len;
+    p.angle = Math.atan2(dashDy, dashDx);
+  }
+
+  const dashVelocity = 680; // px/s
+  p.vx = dashDx * dashVelocity;
+  p.vy = dashDy * dashVelocity;
+
+  triggerScreenShake(4);
+  sound.playDash();
+
+  // Partículas de estela de viento / agua
+  for (let i = 0; i < 20; i++) {
+    particles.push({
+      x: p.x + (Math.random() - 0.5) * 16,
+      y: p.y + (Math.random() - 0.5) * 16,
+      vx: -dashDx * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
+      vy: -dashDy * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
+      life: 0.55,
+      maxLife: 0.55,
+      color: ['#38bdf8', '#0ea5e9', '#ffffff', '#7dd3fc'][Math.floor(Math.random() * 4)],
+      size: 2.5 + Math.random() * 2.5,
+      type: 'water',
+    });
+  }
+
+  showToast('⚡ ¡IMPULSO DASH ACTIVADO!', 'reuse');
+}
 
 // Botones UI con sonido de click
 document.getElementById('btnReduce')?.addEventListener('click', () => { sound.playButtonClick(); actionReduce(); });
@@ -198,6 +326,38 @@ function spawnFloatingText(text: string, x: number, y: number, color: string) {
   floatingTexts.push({ text, x, y, vy: -1.5, alpha: 1.0, color });
 }
 
+function register3RComboAction(actionName: string) {
+  state.combo.count = Math.min(3, state.combo.count + 1);
+  state.combo.timer = 5.0; // 5 segundos para mantener el combo activo
+
+  if (state.combo.count >= 2) {
+    const multiplier = state.combo.count;
+    const bonus = 60 * multiplier;
+    state.score += bonus;
+    sound.playCombo();
+    triggerScreenShake(4);
+
+    spawnFloatingText(`🔥 ¡COMBO x${multiplier} ACTIVADO! +${bonus} PTS`, state.player.x - 50, state.player.y - 45, '#fbbf24');
+    if (state.combo.count === 3) {
+      showToast('🌟 ¡TRIPLE-R FRENZY ALCANZADO! Máximo Multiplicador Activo', 'recycle');
+      // Partículas doradas
+      for (let i = 0; i < 20; i++) {
+        particles.push({
+          x: state.player.x + (Math.random() - 0.5) * 30,
+          y: state.player.y + (Math.random() - 0.5) * 30,
+          vx: (Math.random() - 0.5) * 6,
+          vy: (Math.random() - 0.8) * 6,
+          life: 0.8,
+          maxLife: 0.8,
+          color: '#fbbf24',
+          size: 3.5,
+          type: 'spark',
+        });
+      }
+    }
+  }
+}
+
 // --------------------------------------------------------------------------
 // ACCIONES 3R CON FEEDBACK VISUAL Y SONORO
 // --------------------------------------------------------------------------
@@ -207,7 +367,12 @@ function actionReduce() {
     leaking.isLeaking = false;
     leaking.repairProgress = 100;
     state.metrics.totalLitersSaved += 80;
-    state.score += 150;
+    
+    // Bonificación si hay evento de mega-rotura
+    const isBurst = state.activeChaos?.type === 'burst';
+    const earnedScore = isBurst ? 220 : 150;
+    state.score += earnedScore;
+
     state.player.isWrenching = true;
     setTimeout(() => (state.player.isWrenching = false), 500);
 
@@ -241,8 +406,9 @@ function actionReduce() {
       });
     }
 
-    spawnFloatingText('+150 PTS (80L Salvados!)', leaking.x + 60, leaking.y - 10, '#38bdf8');
-    showToast('¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
+    register3RComboAction('reduce');
+    spawnFloatingText(`+${earnedScore} PTS (80L Salvados!)`, leaking.x + 60, leaking.y - 10, '#38bdf8');
+    showToast(isBurst ? '🚨 ¡Fuga de emergencia contenida! +220 PTS' : '¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
     updateHUD();
   } else {
     // Si no hay roturas, generar una nueva aleatoria tras un breve delay para juego continuo
@@ -271,7 +437,11 @@ function actionReduce() {
 
 function actionReuse() {
   state.metrics.totalLitersReused += 45;
-  state.score += 80;
+  // Si hay ola de calor, el riego es crítico y otorga el doble de puntos
+  const isHeatwave = state.activeChaos?.type === 'heatwave';
+  const earnedScore = isHeatwave ? 160 : 80;
+  state.score += earnedScore;
+
   state.sprinklersActive = true;
   state.sprinklerTimer = 120; // 2 segundos
 
@@ -305,14 +475,15 @@ function actionReuse() {
     });
   });
 
-  spawnFloatingText('+80 PTS (45L Reusados en Riego 🌱)', 340, 360, '#34d399');
-  showToast('Aguas grises canalizadas al huerto comunitario', 'reuse');
+  register3RComboAction('reuse');
+  spawnFloatingText(`+${earnedScore} PTS (${isHeatwave ? '☀️ OLA CALOR x2' : '45L Reusados 🌱'})`, 340, 360, '#34d399');
+  showToast(isHeatwave ? '☀️ ¡Riego de emergencia bajo ola de calor! Puntos Duplicados' : 'Aguas grises canalizadas al huerto comunitario', 'reuse');
   updateHUD();
 }
 
 function actionRecycle() {
   state.metrics.totalLitersRecycled += 60;
-  state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 2.0);
+  state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 2.5);
   state.score += 120;
 
   sound.playRecycle();
@@ -344,7 +515,8 @@ function actionRecycle() {
     });
   }
 
-  spawnFloatingText('+120 PTS (Pureza +2.0% ⚗️)', state.plant.x - 60, state.plant.y - 40, '#c084fc');
+  register3RComboAction('recycle');
+  spawnFloatingText('+120 PTS (Pureza +2.5% ⚗️)', state.plant.x - 60, state.plant.y - 40, '#c084fc');
   showToast('Planta de filtrado biológico activada. Pureza restaurada.', 'recycle');
   updateHUD();
 }
@@ -427,53 +599,183 @@ function updateHUD() {
 }
 
 // --------------------------------------------------------------------------
-// BUCLE PRINCIPAL DE RENDERIZADO Y FÍSICA CANVAS 2D A 60 FPS
+// BUCLE PRINCIPAL DE RENDERIZADO Y FÍSICA CANVAS 2D A 60 FPS (DELTA TIME)
 // --------------------------------------------------------------------------
 let waveTime = 0;
+let lastFrameTime = performance.now();
 
-function gameLoop() {
+function gameLoop(now: number) {
+  // Delta time en segundos (tope de 0.05s para evitar saltos al minimizar pestaña)
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
+  lastFrameTime = now;
+
   state.tick++;
-  waveTime += 0.04;
-  state.plant.spinAngle += 0.03;
+  waveTime += dt * 3.0;
+  state.plant.spinAngle += dt * 2.5;
 
   if (state.sprinklerTimer > 0) {
     state.sprinklerTimer--;
     if (state.sprinklerTimer === 0) state.sprinklersActive = false;
   }
 
-  // Movimiento suave del jugador con interpolación hacia click target
-  const speed = 4.5;
-  let moveX = 0;
-  let moveY = 0;
-  if (keys['w'] || keys['arrowup']) moveY -= speed;
-  if (keys['s'] || keys['arrowdown']) moveY += speed;
-  if (keys['a'] || keys['arrowleft']) moveX -= speed;
-  if (keys['d'] || keys['arrowright']) moveX += speed;
+  // Actualizar cooldowns y estados del jugador
+  const p = state.player;
+  if (p.dashCooldown > 0) p.dashCooldown = Math.max(0, p.dashCooldown - dt);
+  if (p.speedBuffTimer > 0) p.speedBuffTimer = Math.max(0, p.speedBuffTimer - dt);
 
-  if (moveX === 0 && moveY === 0) {
-    const dx = state.player.targetX - state.player.x;
-    const dy = state.player.targetY - state.player.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 5) {
-      moveX = (dx / dist) * Math.min(dist, speed);
-      moveY = (dy / dist) * Math.min(dist, speed);
+  // Actualizar temporizador de Combo 3R
+  if (state.combo.timer > 0) {
+    state.combo.timer -= dt;
+    if (state.combo.timer <= 0) {
+      state.combo.count = 0;
     }
   }
 
-  state.player.x = Math.max(60, Math.min(canvas.width - 60, state.player.x + moveX));
-  state.player.y = Math.max(60, Math.min(canvas.height - 60, state.player.y + moveY));
+  // Actualizar Ciclo de Eventos de Caos Dinámicos
+  if (state.activeChaos) {
+    state.activeChaos.duration -= dt;
+    if (state.activeChaos.type === 'rain') {
+      // Lluvia recarga el embalse continuamente
+      state.metrics.reservoirLevelPct = Math.min(100, state.metrics.reservoirLevelPct + dt * 0.4);
+    } else if (state.activeChaos.type === 'heatwave') {
+      // Calor acelera evaporación
+      state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - dt * 0.04);
+    }
+    if (state.activeChaos.duration <= 0) {
+      state.activeChaos = null;
+      state.chaosTimer = 22.0 + Math.random() * 10;
+      showToast('🌤️ Evento climático finalizado. Condiciones normales.', 'reuse');
+    }
+  } else {
+    state.chaosTimer -= dt;
+    if (state.chaosTimer <= 0) {
+      const types: ('heatwave' | 'burst' | 'rain')[] = ['heatwave', 'burst', 'rain'];
+      const chosen = types[Math.floor(Math.random() * types.length)];
+      sound.playChaosAlarm();
+      triggerScreenShake(8);
 
-  if (moveX !== 0 || moveY !== 0) {
-    state.player.angle = Math.atan2(moveY, moveX);
-    if (state.tick % 11 === 0) {
+      if (chosen === 'heatwave') {
+        state.activeChaos = {
+          type: 'heatwave',
+          title: '☀️ ¡OLA DE CALOR! Riega el huerto rápido (PUNTOS x2)',
+          duration: 12.0,
+          maxDuration: 12.0,
+        };
+        showToast('☀️ ¡Ola de Calor! El embalse se evapora rápido', 'reduce');
+      } else if (chosen === 'burst') {
+        state.activeChaos = {
+          type: 'burst',
+          title: '🚨 ¡MEGA-ROTURA A PRESIÓN! Repara las tuberías críticas',
+          duration: 12.0,
+          maxDuration: 12.0,
+        };
+        state.pipes.forEach((pipe) => (pipe.isLeaking = true));
+        showToast('🚨 ¡Mega-Rotura! Fugas activas en toda la red', 'reduce');
+      } else if (chosen === 'rain') {
+        state.activeChaos = {
+          type: 'rain',
+          title: '🌧️ ¡LLUVIA TORRENCIAL! Captación masiva (+Recarga)',
+          duration: 12.0,
+          maxDuration: 12.0,
+        };
+        state.metrics.reservoirLevelPct = Math.min(100, state.metrics.reservoirLevelPct + 15.0);
+        showToast('🌧️ ¡Lluvia Torrencial! Embalse recargado +15%', 'reuse');
+      }
+    }
+  }
+
+  // 1. Polling de entrada continua (WASD y Flechas)
+  let inX = 0;
+  let inY = 0;
+  if (isKeyPressed('KeyW', 'ArrowUp', 'w')) inY -= 1;
+  if (isKeyPressed('KeyS', 'ArrowDown', 's')) inY += 1;
+  if (isKeyPressed('KeyA', 'ArrowLeft', 'a')) inX -= 1;
+  if (isKeyPressed('KeyD', 'ArrowRight', 'd')) inX += 1;
+
+  const hasKeyboardInput = (inX !== 0 || inY !== 0);
+
+  if (hasKeyboardInput) {
+    // Si el usuario usa el teclado, cancelar inmediatamente el target del clic
+    p.targetX = null;
+    p.targetY = null;
+
+    // Normalizar vector para que diagonales (ej: W + D) tengan la misma velocidad
+    const inputLen = Math.hypot(inX, inY);
+    inX /= inputLen;
+    inY /= inputLen;
+  } else if (p.targetX !== null && p.targetY !== null) {
+    // Desplazamiento hacia el punto de clic (Click-to-Move)
+    const toTargetX = p.targetX - p.x;
+    const toTargetY = p.targetY - p.y;
+    const dist = Math.hypot(toTargetX, toTargetY);
+    if (dist > 6) {
+      inX = toTargetX / dist;
+      inY = toTargetY / dist;
+    } else {
+      p.targetX = null;
+      p.targetY = null;
+    }
+  }
+
+  // 2. Física con Aceleración, Fricción e Inercia Suave
+  const baseSpeed = p.speedBuffTimer > 0 ? 370 : 260; // px/s
+  const accel = 1750; // px/s^2
+
+  if (p.isDashing) {
+    p.dashTimer -= dt;
+    if (p.dashTimer <= 0) {
+      p.isDashing = false;
+    }
+    // Generar siluetas fantasma (afterimages) durante el dash
+    if (state.tick % 2 === 0) {
+      afterimages.push({
+        x: p.x,
+        y: p.y,
+        angle: p.angle,
+        alpha: 0.65,
+      });
+    }
+  } else {
+    // Aceleración suave
+    p.vx += inX * accel * dt;
+    p.vy += inY * accel * dt;
+
+    // Fricción exponencial independiente de los FPS
+    const frictionFactor = hasKeyboardInput ? 0.04 : 0.0006;
+    p.vx *= Math.pow(frictionFactor, dt);
+    p.vy *= Math.pow(frictionFactor, dt);
+
+    // Limitar a velocidad máxima si no está en dash
+    const currentSpeed = Math.hypot(p.vx, p.vy);
+    if (currentSpeed > baseSpeed) {
+      p.vx = (p.vx / currentSpeed) * baseSpeed;
+      p.vy = (p.vy / currentSpeed) * baseSpeed;
+    }
+  }
+
+  // Integrar posición
+  p.x += p.vx * dt;
+  p.y += p.vy * dt;
+
+  // Limitar dentro de los límites del mapa
+  p.x = Math.max(50, Math.min(canvas.width - 50, p.x));
+  p.y = Math.max(50, Math.min(canvas.height - 50, p.y));
+
+  // Animación de ángulo, ciclo de pasos y partículas de pisadas
+  const moveSpeed = Math.hypot(p.vx, p.vy);
+  if (moveSpeed > 15) {
+    p.angle = Math.atan2(p.vy, p.vx);
+    p.walkCycle += moveSpeed * dt * 0.12;
+
+    if (state.tick % 7 === 0) {
       sound.playFootstep();
       particles.push({
-        x: state.player.x + (Math.random() - 0.5) * 8,
-        y: state.player.y + 14,
-        vx: -moveX * 0.15 + (Math.random() - 0.5) * 0.6,
-        vy: (Math.random() - 0.5) * 0.6,
-        life: 0.5,
-        maxLife: 0.5,
+        x: p.x + (Math.random() - 0.5) * 8,
+        y: p.y + 14,
+        vx: -p.vx * 0.12 + (Math.random() - 0.5) * 0.6,
+        vy: -p.vy * 0.12 + (Math.random() - 0.5) * 0.6,
+        life: 0.45,
+        maxLife: 0.45,
         color: 'rgba(217, 180, 130, 0.45)',
         size: 2.2,
         type: 'leaf',
@@ -481,8 +783,150 @@ function gameLoop() {
     }
   }
 
+  // 3. Generación periódica y recolección de coleccionables ("Eco-Kits")
+  collectibleSpawnTimer -= dt;
+  if (collectibleSpawnTimer <= 0 && collectibles.length < 3) {
+    collectibleSpawnTimer = 12 + Math.random() * 8;
+    const types: ('kit' | 'droplet' | 'speed')[] = ['kit', 'droplet', 'speed'];
+    const chosenType = types[Math.floor(Math.random() * types.length)];
+    // Coordenadas transitables en el mapa
+    const cx = 310 + Math.random() * 240;
+    const cy = 180 + Math.random() * 320;
+    collectibles.push({
+      id: nextCollectibleId++,
+      x: cx,
+      y: cy,
+      type: chosenType,
+      life: 25.0,
+      pulse: 0,
+    });
+  }
+
+  // Actualizar y detectar colisiones de coleccionables
+  for (let i = collectibles.length - 1; i >= 0; i--) {
+    const c = collectibles[i];
+    c.pulse += dt * 4;
+    c.life -= dt;
+    if (c.life <= 0) {
+      collectibles.splice(i, 1);
+      continue;
+    }
+
+    // Colisión radio-a-radio (< 28 px)
+    const distToPlayer = Math.hypot(p.x - c.x, p.y - c.y);
+    if (distToPlayer < 28) {
+      sound.playCollect();
+      triggerScreenShake(3);
+
+      if (c.type === 'kit') {
+        state.score += 100;
+        const leak = state.pipes.find((pipe) => pipe.isLeaking);
+        if (leak) {
+          leak.isLeaking = false;
+          leak.repairProgress = 100;
+          state.metrics.totalLitersSaved += 80;
+          spawnFloatingText('¡ECO-KIT: Fuga Reparada Instantáneamente! 🧰 (+100 PTS)', p.x - 60, p.y - 35, '#38bdf8');
+          showToast('¡Eco-Kit usado! Tubería soldada automáticamente', 'reduce');
+        } else {
+          spawnFloatingText('+100 PTS (Eco-Kit de Herramientas 🧰)', p.x - 50, p.y - 35, '#fbbf24');
+        }
+      } else if (c.type === 'droplet') {
+        state.score += 60;
+        state.metrics.reservoirLevelPct = Math.min(100, state.metrics.reservoirLevelPct + 6.0);
+        spawnFloatingText('¡AGUA PURA RECARGADA! +6.0% 💧 (+60 PTS)', p.x - 50, p.y - 35, '#34d399');
+        showToast('¡Gota de Agua Cristalina recogida! Embalse recargado', 'reuse');
+      } else if (c.type === 'speed') {
+        p.speedBuffTimer = 6.0; // 6 segundos de súper velocidad
+        state.score += 40;
+        spawnFloatingText('¡TURBO ECO ACTIVO! ⚡ (+40% Velocidad)', p.x - 50, p.y - 35, '#a855f7');
+        showToast('¡Turbo activado! Movimiento súper veloz', 'recycle');
+      }
+
+      // Destello de chispas
+      for (let s = 0; s < 16; s++) {
+        particles.push({
+          x: c.x,
+          y: c.y,
+          vx: (Math.random() - 0.5) * 5,
+          vy: (Math.random() - 0.5) * 5,
+          life: 0.6,
+          maxLife: 0.6,
+          color: c.type === 'kit' ? '#fbbf24' : c.type === 'droplet' ? '#38bdf8' : '#c084fc',
+          size: 3,
+          type: 'spark',
+        });
+      }
+
+      updateHUD();
+      collectibles.splice(i, 1);
+    }
+  }
+
+  // 3.1. Generación y colisión de Amenazas Hídricas (Manchas de lodo)
+  threatSpawnTimer -= dt;
+  if (threatSpawnTimer <= 0 && threats.length < 2) {
+    threatSpawnTimer = 12 + Math.random() * 8;
+    threats.push({
+      id: nextThreatId++,
+      x: canvas.width - 60,
+      y: 160 + Math.random() * (canvas.height - 240),
+      vx: -42 - Math.random() * 25,
+      vy: (Math.random() - 0.5) * 20,
+      radius: 17,
+      pulse: 0,
+    });
+  }
+
+  for (let i = threats.length - 1; i >= 0; i--) {
+    const t = threats[i];
+    t.x += t.vx * dt;
+    t.y += t.vy * dt;
+    t.pulse += dt * 3.5;
+
+    const dPlayer = Math.hypot(p.x - t.x, p.y - t.y);
+    if (dPlayer < t.radius + 18) {
+      if (p.isDashing) {
+        sound.playWaterSplash();
+        triggerScreenShake(7);
+        state.score += 75;
+        spawnFloatingText('💥 ¡CONTAMINANTE DESTRUIDO CON DASH! +75 PTS', t.x - 60, t.y - 25, '#f43f5e');
+        showToast('¡Amenaza evaporada con Dash sónico!', 'recycle');
+        for (let k = 0; k < 18; k++) {
+          particles.push({
+            x: t.x,
+            y: t.y,
+            vx: (Math.random() - 0.5) * 6,
+            vy: (Math.random() - 0.5) * 6,
+            life: 0.5,
+            maxLife: 0.5,
+            color: '#a855f7',
+            size: 3,
+            type: 'bubble',
+          });
+        }
+        threats.splice(i, 1);
+        updateHUD();
+        continue;
+      } else {
+        state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 1.0);
+        spawnFloatingText('⚠️ ¡TOXINA! Pureza -1.0% (¡Usa DASH para destruirla!)', p.x - 60, p.y - 25, '#ef4444');
+        p.vx = -p.vx * 1.5;
+        p.vy = -p.vy * 1.5;
+        triggerScreenShake(4);
+      }
+    }
+
+    if (t.x < 260) {
+      state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 3.5);
+      spawnFloatingText('⚠️ ¡Contaminante llegó al embalse! Pureza -3.5%', 220, t.y, '#dc2626');
+      triggerScreenShake(6);
+      threats.splice(i, 1);
+      updateHUD();
+    }
+  }
+
   // Drenaje continuo realista
-  const hasLeak = state.pipes.some((p) => p.isLeaking);
+  const hasLeak = state.pipes.some((pipe) => pipe.isLeaking);
   state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - (hasLeak ? 0.02 : 0.004));
   if (state.tick % 25 === 0) updateHUD();
 
@@ -790,22 +1234,144 @@ function gameLoop() {
   ctx.restore();
 
   // ------------------------------------------------------------------------
-  // 6. AVATAR DEL JUGADOR (AquaGuardian - Pixel Art Sprite 2D)
+  // 5.1. RENDERIZADO DE COLECCIONABLES EN EL MAPA (ECO-KITS, GOTAS, TURBO)
+  // ------------------------------------------------------------------------
+  collectibles.forEach((c) => {
+    ctx.save();
+    const floatY = Math.sin(c.pulse) * 4;
+    ctx.translate(c.x, c.y + floatY);
+
+    // Resplandor exterior pulsante
+    const glowColor = c.type === 'kit' ? 'rgba(251, 191, 36, 0.4)' : c.type === 'droplet' ? 'rgba(56, 189, 248, 0.45)' : 'rgba(168, 85, 247, 0.45)';
+    ctx.fillStyle = glowColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, 18 + Math.sin(c.pulse * 1.5) * 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Sombra en el suelo
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, 14 - floatY, 12, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (c.type === 'kit') {
+      // Maletín de herramientas Eco-Kit Pixel Art (Dorado / Metal)
+      ctx.fillStyle = '#b45309';
+      ctx.fillRect(-10, -7, 20, 14);
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillRect(-9, -6, 18, 12);
+      // Asa del maletín
+      ctx.strokeStyle = '#78350f';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-4, -10, 8, 4);
+      // Cruz / Sello verde ecológico
+      ctx.fillStyle = '#10b981';
+      ctx.fillRect(-5, -2, 10, 4);
+      ctx.fillRect(-2, -5, 4, 10);
+    } else if (c.type === 'droplet') {
+      // Gota de Agua Cristalina resplandeciente
+      ctx.fillStyle = '#0ea5e9';
+      ctx.beginPath();
+      ctx.arc(0, 2, 9, 0, Math.PI);
+      ctx.lineTo(0, -11);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = '#e0f2fe';
+      ctx.fillRect(-3, -2, 3, 3);
+    } else if (c.type === 'speed') {
+      // Turbo Rayo Verde/Morado
+      ctx.fillStyle = '#a855f7';
+      ctx.beginPath();
+      ctx.moveTo(3, -11);
+      ctx.lineTo(-7, 1);
+      ctx.lineTo(0, 1);
+      ctx.lineTo(-3, 11);
+      ctx.lineTo(7, -1);
+      ctx.lineTo(0, -1);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    ctx.restore();
+  });
+
+  // ------------------------------------------------------------------------
+  // 5.15. RENDERIZADO DE AMENAZAS HÍDRICAS (CONTAMINANTES TÓXICOS)
+  // ------------------------------------------------------------------------
+  threats.forEach((t) => {
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    const pulseScale = 1 + Math.sin(t.pulse) * 0.12;
+    ctx.fillStyle = 'rgba(168, 85, 247, 0.25)';
+    ctx.beginPath();
+    ctx.arc(0, 0, (t.radius + 6) * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#7e22ce';
+    ctx.beginPath();
+    ctx.arc(0, 0, t.radius * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#c084fc';
+    ctx.beginPath();
+    ctx.arc(-4, -4, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#f43f5e';
+    ctx.font = 'bold 10px Outfit, sans-serif';
+    ctx.fillText('☣️ TÓXICO', -22, -t.radius - 4);
+    ctx.restore();
+  });
+
+  // ------------------------------------------------------------------------
+  // 5.2. RENDERIZADO DE AFTERIMAGES (ESTELA DEL DASH)
+  // ------------------------------------------------------------------------
+  for (let i = afterimages.length - 1; i >= 0; i--) {
+    const ai = afterimages[i];
+    ai.alpha -= 0.055;
+    if (ai.alpha <= 0) {
+      afterimages.splice(i, 1);
+      continue;
+    }
+
+    ctx.save();
+    ctx.translate(ai.x, ai.y);
+    ctx.rotate(ai.angle);
+    ctx.globalAlpha = ai.alpha * 0.7;
+
+    // Silueta translúcida en cian/azul neón
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(0, 0, 14, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // ------------------------------------------------------------------------
+  // 6. AVATAR DEL JUGADOR (AquaGuardian - Pixel Art Sprite 2D Con Bobbing)
   // ------------------------------------------------------------------------
   ctx.save();
-  ctx.translate(state.player.x, state.player.y);
+  const bobY = Math.sin(state.player.walkCycle) * 2.2;
+  ctx.translate(state.player.x, state.player.y + bobY);
 
   // Sombra de contacto
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
-  ctx.ellipse(0, 18, 16, 7, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 18 - bobY, 16, 7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Halo luminoso del guardián
-  ctx.strokeStyle = state.player.isWrenching ? 'rgba(251, 191, 36, 0.8)' : 'rgba(56, 189, 248, 0.5)';
-  ctx.lineWidth = 1.5;
+  // Halo luminoso del guardián (Dorado en soldadura, Cian al dashear o normal)
+  ctx.strokeStyle = state.player.isWrenching
+    ? 'rgba(251, 191, 36, 0.9)'
+    : (state.player.isDashing
+        ? 'rgba(56, 189, 248, 0.95)'
+        : (state.player.speedBuffTimer > 0
+            ? 'rgba(168, 85, 247, 0.85)'
+            : 'rgba(56, 189, 248, 0.5)'));
+  ctx.lineWidth = state.player.isDashing ? 2.5 : 1.5;
   ctx.beginPath();
-  ctx.arc(0, 4, 22, 0, Math.PI * 2);
+  ctx.arc(0, 4, state.player.isDashing ? 26 : 22, 0, Math.PI * 2);
   ctx.stroke();
 
   // === RENDERIZADO PIXEL ART RETRO DEL PERSONAJE ===
@@ -874,17 +1440,130 @@ function gameLoop() {
 
   ctx.restore();
 
+  // Barra visual de Cooldown de Dash (si está en recarga)
+  if (state.player.dashCooldown > 0) {
+    const barW = 28;
+    const barH = 3;
+    const pct = 1.0 - (state.player.dashCooldown / 0.95);
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.7)';
+    ctx.fillRect(-barW / 2, -38, barW, barH);
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillRect(-barW / 2, -38, barW * pct, barH);
+  } else {
+    // Listo para dash (indicador de impulso)
+    ctx.fillStyle = state.player.isDashing ? '#fbbf24' : '#38bdf8';
+    ctx.font = 'bold 9px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('⚡ SHIFT', 0, -36);
+  }
+
   // Etiqueta superior del jugador
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 10px Outfit, sans-serif';
   ctx.textAlign = 'center';
   ctx.shadowColor = '#000000';
   ctx.shadowBlur = 4;
-  ctx.fillText(session.username || 'Guardián', 0, -28);
+  ctx.fillText(session.username || 'Guardián', 0, -25);
   ctx.shadowBlur = 0;
   ctx.textAlign = 'left';
 
   ctx.restore();
+
+  // Aura interactiva de proximidad holográfica
+  const dPipe = Math.hypot(state.player.x - 410, state.player.y - 220);
+  const dGarden = Math.hypot(state.player.x - 410, state.player.y - 440);
+  const dPlant = Math.hypot(state.player.x - 780, state.player.y - 340);
+
+  let auraColor: string | null = null;
+  let auraPrompt: string | null = null;
+
+  if (dPipe < 160) {
+    auraColor = '#38bdf8';
+    auraPrompt = '[ESPACIO] 🔧 REPARAR FUGA';
+  } else if (dGarden < 160) {
+    auraColor = '#34d399';
+    auraPrompt = '[R] 🌱 CANALIZAR RIEGO';
+  } else if (dPlant < 170) {
+    auraColor = '#c084fc';
+    auraPrompt = '[F] ⚗️ PURIFICAR AGUA';
+  }
+
+  if (auraColor && auraPrompt) {
+    ctx.save();
+    ctx.strokeStyle = auraColor;
+    ctx.lineWidth = 2.5;
+    ctx.globalAlpha = 0.75 + Math.sin(state.tick * 0.15) * 0.25;
+    ctx.beginPath();
+    ctx.arc(state.player.x, state.player.y + 6, 28, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.strokeStyle = auraColor;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(state.player.x - 75, state.player.y - 48, 150, 22, 6);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 11px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(auraPrompt, state.player.x, state.player.y - 33);
+    ctx.restore();
+  }
+
+  // Clima Dinámico y Evento de Caos
+  if (state.activeChaos?.type === 'heatwave') {
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+  } else if (state.activeChaos?.type === 'rain') {
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
+    ctx.lineWidth = 1.5;
+    for (let r = 0; r < 40; r++) {
+      const rx = (state.tick * 9 + r * 37) % canvas.width;
+      const ry = (state.tick * 18 + r * 31) % canvas.height;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 3, ry + 16);
+      ctx.stroke();
+    }
+  }
+
+  // Banner Superior de Evento de Caos
+  if (state.activeChaos) {
+    const bannerW = 440;
+    const bannerX = (canvas.width - bannerW) / 2;
+    ctx.fillStyle = state.activeChaos.type === 'burst' ? 'rgba(220, 38, 38, 0.92)' : (state.activeChaos.type === 'heatwave' ? 'rgba(217, 119, 6, 0.92)' : 'rgba(2, 132, 199, 0.92)');
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(bannerX, 10, bannerW, 30, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 12px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`${state.activeChaos.title} (${Math.ceil(state.activeChaos.duration)}s)`, canvas.width / 2, 29);
+  }
+
+  // Badge de Combo Multiplicador en Canvas
+  if (state.combo.count >= 2) {
+    ctx.save();
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.92)';
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(canvas.width - 240, 14, 210, 32, 8);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 13px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(`🔥 ECO-COMBO x${state.combo.count} ACTIVADO!`, canvas.width - 135, 35);
+    ctx.restore();
+  }
 
   // ------------------------------------------------------------------------
   // 7. ACTUALIZACIÓN Y RENDERIZADO DE PARTÍCULAS
@@ -965,9 +1644,22 @@ requestAnimationFrame(gameLoop);
 updateHUD();
 
 // ==========================================================================
-// INTEGRACIÓN CON GO GATEWAY (API REST & MATCHMAKING)
+// INTEGRACIÓN CON GO GATEWAY (API REST, MATCHMAKING & MULTI-HOST FAILOVER)
 // ==========================================================================
-let gatewayBaseUrl = 'http://localhost:8080';
+let gatewayNodeList: string[] = ['http://localhost:8080'];
+let currentGatewayIndex = 0;
+
+// Inicializar lista de nodos desde parámetro URL (?gw=192.168.1.10:8080,192.168.1.11:8080)
+if (typeof window !== 'undefined') {
+  const urlParams = new URLSearchParams(window.location.search);
+  const gwParam = urlParams.get('gw');
+  if (gwParam) {
+    gatewayNodeList = gwParam.split(',').map((s) => {
+      s = s.trim();
+      return s.startsWith('http://') || s.startsWith('https://') ? s : 'http://' + s;
+    });
+  }
+}
 
 const session = {
   token: '',
@@ -998,13 +1690,13 @@ const txtRoomCode = document.getElementById('txtRoomCode');
 
 function getActiveGatewayUrl(): string {
   if (inputGatewayHost && inputGatewayHost.value.trim()) {
-    let val = inputGatewayHost.value.trim();
-    if (!val.startsWith('http://') && !val.startsWith('https://')) {
-      val = 'http://' + val;
-    }
-    gatewayBaseUrl = val;
+    const val = inputGatewayHost.value.trim();
+    gatewayNodeList = val.split(',').map((s) => {
+      s = s.trim();
+      return s.startsWith('http://') || s.startsWith('https://') ? s : 'http://' + s;
+    });
   }
-  return gatewayBaseUrl;
+  return gatewayNodeList[currentGatewayIndex % gatewayNodeList.length];
 }
 
 function toggleLobby(show: boolean) {
@@ -1032,30 +1724,59 @@ inputGatewayHost?.addEventListener('change', () => {
   fetchRoomsList();
 });
 
-// Verificar Salud del Gateway Go (/healthz)
+const netStatusBanner = document.getElementById('netStatusBanner');
+let wasOffline = false;
+
+// Verificar Salud del Gateway Go (/healthz) con Failover Automático entre Nodos de Respaldo
 async function checkGatewayHealth() {
-  const base = getActiveGatewayUrl();
-  try {
-    const res = await fetch(`${base}/healthz`, { method: 'GET' });
-    if (res.ok) {
-      session.isOnline = true;
-      if (gatewayStatusDot) {
-        gatewayStatusDot.className = 'status-indicator online';
+  const totalNodes = gatewayNodeList.length;
+  let attempts = 0;
+
+  while (attempts < totalNodes) {
+    const base = getActiveGatewayUrl();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
+
+    try {
+      const res = await fetch(`${base}/healthz`, {
+        method: 'GET',
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (res.ok) {
+        session.isOnline = true;
+        if (wasOffline) {
+          wasOffline = false;
+          showToast(`🟢 Enlace restablecido con ${base}`, 'reuse');
+        }
+        if (netStatusBanner) netStatusBanner.classList.add('hidden');
+        if (gatewayStatusDot) gatewayStatusDot.className = 'status-indicator online';
+        if (gatewayStatusText) {
+          gatewayStatusText.textContent = `🟢 Enlace Activo: ${base} (:8080)`;
+        }
+        return;
+      } else {
+        throw new Error('Status no OK');
       }
-      if (gatewayStatusText) {
-        gatewayStatusText.textContent = `🟢 Conectado: ${base} (:8080) - Listo`;
+    } catch {
+      clearTimeout(timeoutId);
+      attempts++;
+      if (totalNodes > 1 && attempts < totalNodes) {
+        currentGatewayIndex = (currentGatewayIndex + 1) % totalNodes;
+        const nextNode = getActiveGatewayUrl();
+        showToast(`⚡ Nodo ${base} inalcanzable. Conmutando a réplica ${nextNode}...`, 'reduce');
       }
-    } else {
-      throw new Error('Status no OK');
     }
-  } catch (e) {
-    session.isOnline = false;
-    if (gatewayStatusDot) {
-      gatewayStatusDot.className = 'status-indicator offline';
-    }
-    if (gatewayStatusText) {
-      gatewayStatusText.textContent = `🔴 Servidor Inaccesible en ${base}. Verifica la IP pública o Docker.`;
-    }
+  }
+
+  // Si ninguno de los nodos respondió
+  session.isOnline = false;
+  wasOffline = true;
+  if (netStatusBanner) netStatusBanner.classList.remove('hidden');
+  if (gatewayStatusDot) gatewayStatusDot.className = 'status-indicator offline';
+  if (gatewayStatusText) {
+    gatewayStatusText.textContent = `🔴 Nodos inalcanzables. Simulación local de contingencia activa.`;
   }
 }
 
@@ -1274,5 +1995,7 @@ function updateRTTDisplay() {
 }
 
 setInterval(updateRTTDisplay, 1200);
+// Monitoreo continuo de salud y corte físico de red (cada 2.5s)
+setInterval(checkGatewayHealth, 2500);
 
 

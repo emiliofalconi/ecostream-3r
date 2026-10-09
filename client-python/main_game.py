@@ -16,8 +16,17 @@ import heapq
 import random
 import argparse
 import threading
+import logging
 from typing import List, Tuple, Optional, Set
 from pathlib import Path
+
+# Configurar logging explícito de ciclo de vida
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%H:%M:%S"
+)
+logger = logging.getLogger("EcoStreamClient")
 
 # Configurar path de stubs proto
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -28,6 +37,23 @@ import pygame
 from ecostream.v1 import common_pb2
 from ecostream.v1 import gameplay_pb2
 from ecostream.v1 import gameplay_pb2_grpc
+
+# Clases fallback para renderizado continuo y modo desconectado
+class LocalPipe:
+    def __init__(self, pipe_id: int, is_leaking: bool = False, pressure: float = 3.2):
+        self.pipe_id = pipe_id
+        self.is_leaking = is_leaking
+        self.pressure = pressure
+
+class LocalValve:
+    def __init__(self, valve_id: int, is_open: bool = True):
+        self.valve_id = valve_id
+        self.is_open = is_open
+
+class LocalPlant:
+    def __init__(self, plant_id: int, purity_level: float = 95.0):
+        self.plant_id = plant_id
+        self.purity_level = purity_level
 
 # Dimensiones de la ventana
 WINDOW_WIDTH = 1024
@@ -87,13 +113,16 @@ class FloatingText:
         return self.life > 0
 
 class EcoStreamGameClient:
-    def __init__(self, host="localhost:50052", room_id="rm_demo_01", player_id="usr_victor", is_bot=False):
-        self.host = host
+    def __init__(self, host="localhost:50051", hosts=None, room_id="rm_demo_01", player_id="usr_victor", is_bot=False):
+        raw_hosts = hosts if hosts else host
+        self.host_list = [h.strip() for h in raw_hosts.split(",") if h.strip()]
+        self.host = self.host_list[0] if self.host_list else "localhost:50051"
+        self.current_host_idx = 0
         self.room_id = room_id
         self.player_id = player_id
         self.is_bot = is_bot
 
-        # Estado del juego sincronizado desde Rust (20Hz)
+        # Estado del juego sincronizado desde Rust / Mock (20Hz)
         self.tick = 0
         self.reservoir_pct = 100.0
         self.purity_pct = 96.0
@@ -106,14 +135,24 @@ class EcoStreamGameClient:
         self.reconnect_ticket = ""
         self.is_connected = False
 
-        # Entidades locales
+        # Entidades locales con valores iniciales por defecto (evita pantalla vacía)
         self.player_x = 380.0
         self.player_y = 320.0
-        self.pipes = []
-        self.valves = []
-        self.plants = []
+        self.vx = 0.0
+        self.vy = 0.0
+        self.dash_cooldown = 0.0
+        self.dash_timer = 0.0
+        self.remote_players = []
+        self.active_events = []
+        self.pipes = [
+            LocalPipe(pipe_id=1, is_leaking=False),
+            LocalPipe(pipe_id=2, is_leaking=True),
+            LocalPipe(pipe_id=3, is_leaking=False),
+        ]
+        self.valves = [LocalValve(valve_id=1)]
+        self.plants = [LocalPlant(plant_id=1)]
 
-        # Cola de acciones hacia Rust
+        # Cola de acciones hacia el servidor
         self.action_queue = []
         self.lock = threading.Lock()
 
@@ -121,17 +160,31 @@ class EcoStreamGameClient:
         self.particles = []
         self.floating_texts = []
 
+        logger.info(f"Iniciando EcoStreamGameClient en sala '{self.room_id}' (Jugador: {self.player_id}, Bot: {self.is_bot})")
+        logger.info(f"Nodos de backend configurados: {self.host_list}")
+
         # Iniciar hilo de comunicación gRPC
         self.grpc_thread = threading.Thread(target=self._run_grpc_stream, daemon=True)
         self.grpc_thread.start()
 
     def _run_grpc_stream(self):
-        """Streaming bidireccional continuo con el Servidor Rust (20 Hz)"""
+        """Streaming bidireccional continuo con alta disponibilidad y failover automático (20 Hz)"""
+        channel_options = [
+            ('grpc.keepalive_time_ms', 1000),             # Enviar ping keepalive cada 1 segundo
+            ('grpc.keepalive_timeout_ms', 1500),          # Timeout de 1.5s para detectar corte físico de cable
+            ('grpc.http2.max_pings_without_data', 0),     # Pings continuos permitidos
+            ('grpc.keepalive_permit_without_calls', 1),   # Mantener keepalive aún en reposo
+            ('grpc.initial_reconnect_backoff_ms', 500),   # Reintento rápido a 500ms
+            ('grpc.max_reconnect_backoff_ms', 2000),      # Backoff máximo de 2s
+        ]
+
         while True:
+            current_host = self.host_list[self.current_host_idx % len(self.host_list)]
+            channel = None
             try:
-                channel = grpc.insecure_channel(self.host)
+                logger.info(f"[gRPC Red] Conectando a nodo autoritativo: {current_host} (Modo Alta Disponibilidad)...")
+                channel = grpc.insecure_channel(current_host, options=channel_options)
                 stub = gameplay_pb2_grpc.GameSimulationServiceStub(channel)
-                self.is_connected = True
 
                 def request_generator():
                     t_now = int(time.time() * 1000)
@@ -153,19 +206,41 @@ class EcoStreamGameClient:
                             if self.action_queue:
                                 action = self.action_queue.pop(0)
 
-                        msg = gameplay_pb2.ClientStreamMessage(
-                            room_id=self.room_id,
-                            player_id=self.player_id,
-                            client_tick=client_tick,
-                            action=action,
-                            ping=common_pb2.PingMessage(client_timestamp_ms=t_now, sequence_id=client_tick)
-                        )
+                        # Enviar acción del jugador O sincronizar posición (MoveAction)
+                        # Nota: action y ping están en 'oneof payload', no deben enviarse juntos
+                        if action is not None:
+                            msg = gameplay_pb2.ClientStreamMessage(
+                                room_id=self.room_id,
+                                player_id=self.player_id,
+                                client_tick=client_tick,
+                                action=action
+                            )
+                        else:
+                            msg = gameplay_pb2.ClientStreamMessage(
+                                room_id=self.room_id,
+                                player_id=self.player_id,
+                                client_tick=client_tick,
+                                action=gameplay_pb2.PlayerAction(
+                                    action_id=client_tick,
+                                    move=gameplay_pb2.MoveAction(
+                                        target_position=common_pb2.Vector2D(x=float(self.player_x), y=float(self.player_y)),
+                                        velocity=common_pb2.Vector2D(x=float(self.vx), y=float(self.vy))
+                                    )
+                                )
+                            )
                         yield msg
 
                 responses = stub.StreamGame(request_generator())
+                first_packet = True
                 for resp in responses:
+                    if first_packet:
+                        self.is_connected = True
+                        first_packet = False
+                        logger.info(f"✅ [gRPC Red] Sesión bidireccional activa con nodo autoritativo {current_host}")
+
                     if resp.HasField("initial_snapshot"):
                         self.reconnect_ticket = resp.initial_snapshot.reconnect_ticket
+                        logger.info(f"[gRPC Sync] Snapshot inicial recibido. Ticket de reconexión: {self.reconnect_ticket}")
 
                     if resp.HasField("world_state"):
                         ws = resp.world_state
@@ -178,16 +253,36 @@ class EcoStreamGameClient:
                             self.liters_recycled = ws.water_metrics.total_liters_recycled
                         self.team_score = ws.team_score
                         self.remaining_seconds = ws.remaining_seconds
-                        self.pipes = ws.pipes
-                        self.valves = ws.valves
-                        self.plants = ws.plants
+                        if ws.pipes:
+                            self.pipes = ws.pipes
+                        if ws.valves:
+                            self.valves = ws.valves
+                        if ws.plants:
+                            self.plants = ws.plants
+                        if ws.players:
+                            self.remote_players = [p for p in ws.players if p.player_id != self.player_id]
+                        if ws.active_events:
+                            self.active_events = list(ws.active_events)
+                        else:
+                            self.active_events = []
 
                     if resp.HasField("pong"):
                         self.rtt_ms = int(time.time() * 1000) - resp.pong.echo_client_timestamp_ms
 
-            except Exception:
+            except Exception as ex:
+                if self.is_connected:
+                    logger.warning(f"⚠️ [FALLO DE NODO / CORTE FÍSICO] Servidor {current_host} caído o inalcanzable: {ex}")
                 self.is_connected = False
-                time.sleep(2.0)
+                self.current_host_idx += 1
+                next_host = self.host_list[self.current_host_idx % len(self.host_list)]
+                logger.info(f"⚡ [FAILOVER AUTOMÁTICO] Conmutando a réplica secundaria: {next_host}...")
+                time.sleep(1.0)
+            finally:
+                if channel:
+                    try:
+                        channel.close()
+                    except Exception:
+                        pass
 
     def queue_action(self, action):
         with self.lock:
@@ -418,41 +513,104 @@ class EcoStreamGameClient:
                 elif event.type == pygame.KEYDOWN:
                     if event.key == pygame.K_ESCAPE:
                         running = False
+                    elif (event.key == pygame.K_LSHIFT or event.key == pygame.K_RSHIFT) and not self.is_bot:
+                        # Activar Dash sónico
+                        if self.dash_cooldown <= 0:
+                            self.dash_timer = 0.22
+                            self.dash_cooldown = 0.95
+                            dash_speed = 680.0
+                            mag = math.hypot(self.vx, self.vy)
+                            if mag > 10:
+                                self.vx = (self.vx / mag) * dash_speed
+                                self.vy = (self.vy / mag) * dash_speed
+                            else:
+                                self.vx = dash_speed
+                            for _ in range(16):
+                                self.particles.append(Particle(self.player_x, self.player_y, (random.random()-0.5)*5, (random.random()-0.5)*5, (56, 189, 248), 3, 0.5))
+                            self.floating_texts.append(FloatingText("⚡ DASH!", self.player_x - 15, self.player_y - 25, (56, 189, 248)))
                     elif not self.is_bot and event.key == pygame.K_SPACE:
-                        # 1. Reducir
-                        if self.pipes:
+                        # 1. Reducir: requiere proximidad física con las tuberías (X: ~440, Y: 140-300)
+                        dist_to_pipes = math.hypot(self.player_x - 440, self.player_y - 215)
+                        if dist_to_pipes < 140:
+                            repaired = False
                             for p in self.pipes:
                                 if p.is_leaking:
+                                    p.is_leaking = False
+                                    repaired = True
                                     self.spawn_sparks(self.player_x, self.player_y)
+                                    self.team_score += 150
+                                    self.liters_saved += 120.0
                                     self.queue_action(gameplay_pb2.PlayerAction(
                                         action_id=int(time.time()*1000),
                                         repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=p.pipe_id, repair_progress_delta=50.0)
                                     ))
                                     self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada!)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
+                                    logger.info(f"[Acción 3R - Reducir] Tubería #{p.pipe_id} reparada con éxito. +150 PTS")
                                     break
+                            if not repaired:
+                                self.floating_texts.append(FloatingText("Sin fugas en esta zona", self.player_x - 40, self.player_y - 20, (148, 163, 184)))
+                        else:
+                            self.floating_texts.append(FloatingText("Acércate a la Zona de Tuberías 🔧", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
                     elif not self.is_bot and event.key == pygame.K_r:
-                        # 2. Reusar
-                        self.queue_action(gameplay_pb2.PlayerAction(
-                            action_id=int(time.time()*1000),
-                            divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
-                        ))
-                        self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto 🌱)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
+                        # 2. Reusar: requiere proximidad física con el Huerto / Válvula (X: ~400, Y: 480)
+                        dist_to_garden = math.hypot(self.player_x - 440, self.player_y - 480)
+                        if dist_to_garden < 150:
+                            self.team_score += 80
+                            self.liters_reused += 85.0
+                            self.queue_action(gameplay_pb2.PlayerAction(
+                                action_id=int(time.time()*1000),
+                                divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
+                            ))
+                            self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto 🌱)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
+                            logger.info("[Acción 3R - Reusar] Válvula desviada a huerto comunitario. +80 PTS")
+                        else:
+                            self.floating_texts.append(FloatingText("Acércate al Huerto Comunitario 🌱", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
                     elif not self.is_bot and event.key == pygame.K_f:
-                        # 3. Reciclar
-                        self.queue_action(gameplay_pb2.PlayerAction(
-                            action_id=int(time.time()*1000),
-                            operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
-                        ))
-                        self.floating_texts.append(FloatingText("+120 PTS (Filtro Carbón UV ⚗️)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
+                        # 3. Reciclar: requiere proximidad física con la Planta de Tratamiento UV (X: ~800, Y: 380)
+                        dist_to_plant = math.hypot(self.player_x - 800, self.player_y - 380)
+                        if dist_to_plant < 170:
+                            self.team_score += 120
+                            self.liters_recycled += 60.0
+                            self.purity_pct = min(100.0, self.purity_pct + 1.5)
+                            self.queue_action(gameplay_pb2.PlayerAction(
+                                action_id=int(time.time()*1000),
+                                operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
+                            ))
+                            self.floating_texts.append(FloatingText("+120 PTS (Filtro Carbón UV ⚗️)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
+                            logger.info("[Acción 3R - Reciclar] Filtro UV activado. Pureza incrementada. +120 PTS")
+                        else:
+                            self.floating_texts.append(FloatingText("Acércate a la Planta UV ⚗️", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
 
-            # Movimiento Jugador / Bot
+            # Movimiento Jugador con física suave y normalización diagonal
             if not self.is_bot:
                 keys = pygame.key.get_pressed()
-                speed = 240.0 * dt
-                if keys[pygame.K_w] or keys[pygame.K_UP]: self.player_y = max(110, self.player_y - speed)
-                if keys[pygame.K_s] or keys[pygame.K_DOWN]: self.player_y = min(WINDOW_HEIGHT - 35, self.player_y + speed)
-                if keys[pygame.K_a] or keys[pygame.K_LEFT]: self.player_x = max(35, self.player_x - speed)
-                if keys[pygame.K_d] or keys[pygame.K_RIGHT]: self.player_x = min(WINDOW_WIDTH - 35, self.player_x + speed)
+                in_x, in_y = 0.0, 0.0
+                if keys[pygame.K_w] or keys[pygame.K_UP]: in_y -= 1.0
+                if keys[pygame.K_s] or keys[pygame.K_DOWN]: in_y += 1.0
+                if keys[pygame.K_a] or keys[pygame.K_LEFT]: in_x -= 1.0
+                if keys[pygame.K_d] or keys[pygame.K_RIGHT]: in_x += 1.0
+
+                if in_x != 0.0 or in_y != 0.0:
+                    mag = math.hypot(in_x, in_y)
+                    in_x /= mag
+                    in_y /= mag
+
+                # Actualizar enfriamiento de Dash
+                if self.dash_cooldown > 0:
+                    self.dash_cooldown -= dt
+
+                if self.dash_timer > 0:
+                    self.dash_timer -= dt
+                else:
+                    accel = 1650.0
+                    self.vx += in_x * accel * dt
+                    self.vy += in_y * accel * dt
+                    friction = math.exp(-7.5 * dt)
+                    self.vx *= friction
+                    self.vy *= friction
+
+                self.player_x = max(45.0, min(WINDOW_WIDTH - 45.0, self.player_x + self.vx * dt))
+                self.player_y = max(115.0, min(WINDOW_HEIGHT - 45.0, self.player_y + self.vy * dt))
             else:
                 self.bot_ai_tick()
 
@@ -535,53 +693,110 @@ class EcoStreamGameClient:
             for p in self.particles:
                 pygame.draw.circle(screen, p.color, (int(p.x), int(p.y)), p.size)
 
-            # F. AVATAR
+            # F. OTROS JUGADORES CONECTADOS (MULTIJUGADOR EN VIVO)
+            for rp in self.remote_players:
+                rx, ry = int(rp.position.x), int(rp.position.y)
+                pygame.draw.circle(screen, (34, 197, 94), (rx, ry), 18)
+                pygame.draw.circle(screen, (255, 255, 255), (rx, ry), 18, 2)
+                screen.blit(font_small.render(rp.username, True, (187, 247, 208)), (rx - 20, ry - 30))
+
+            # G. AVATAR PROPIO
             avatar_col = COLOR_BOT if self.is_bot else COLOR_PLAYER
             pygame.draw.circle(screen, avatar_col, (int(self.player_x), int(self.player_y)), 18)
             pygame.draw.circle(screen, (255, 255, 255), (int(self.player_x), int(self.player_y)), 18, 2)
             lbl = "BOT" if self.is_bot else "TÚ"
             screen.blit(font_small.render(lbl, True, (255, 255, 255)), (int(self.player_x) - 10, int(self.player_y) - 8))
 
-            # G. TEXTOS FLOTANTES
+            # TOOLTIP FLOTANTE DE INTERACCIÓN SEGÚN PROXIMIDAD
+            if not self.is_bot:
+                d_pipe = math.hypot(self.player_x - 440, self.player_y - 215)
+                d_garden = math.hypot(self.player_x - 440, self.player_y - 480)
+                d_plant = math.hypot(self.player_x - 800, self.player_y - 380)
+
+                prompt = None
+                if d_pipe < 140:
+                    prompt = "[ESPACIO] 🔧 Reparar Fuga"
+                elif d_garden < 150:
+                    prompt = "[R] 🌱 Regar Huerto"
+                elif d_plant < 170:
+                    prompt = "[F] ⚗️ Filtrado UV"
+
+                if prompt:
+                    p_surf = font_small.render(prompt, True, (254, 240, 138))
+                    screen.blit(p_surf, (int(self.player_x) - 40, int(self.player_y) - 34))
+
+            # H. TEXTOS FLOTANTES
             self.floating_texts = [ft for ft in self.floating_texts if ft.update()]
             for ft in self.floating_texts:
                 screen.blit(font_med.render(ft.text, True, ft.color), (int(ft.x), int(ft.y)))
 
-            # H. HUD SUPERIOR
+            # I. EVENTOS CLIMÁTICOS / CAOS DINÁMICO
+            if self.active_events:
+                ev = self.active_events[0]
+                ev_rect = pygame.Rect(WINDOW_WIDTH // 2 - 210, 90, 420, 26)
+                pygame.draw.rect(screen, (185, 28, 28), ev_rect, border_radius=6)
+                pygame.draw.rect(screen, (254, 202, 202), ev_rect, 1, border_radius=6)
+                screen.blit(font_small.render(f"⚠️ {ev.title} ({ev.remaining_seconds}s)", True, (255, 255, 255)), (WINDOW_WIDTH // 2 - 195, 95))
+
+            # J. HUD SUPERIOR
             pygame.draw.rect(screen, COLOR_PANEL_BG, (0, 0, WINDOW_WIDTH, 85))
             pygame.draw.line(screen, (51, 65, 85), (0, 85), (WINDOW_WIDTH, 85), 2)
 
             screen.blit(font_large.render("EcoStream 3R", True, (56, 189, 248)), (25, 12))
-            screen.blit(font_small.render(f"Lobby: [{self.room_id}] | {mode_title}", True, COLOR_TEXT_MUTED), (25, 38))
-            screen.blit(font_small.render("Controles: [WASD] Mover | [Espacio] 1.Reducir | [R] 2.Reusar | [F] 3.Reciclar", True, (203, 213, 225)), (25, 58))
+            screen.blit(font_small.render(f"Lobby: [{self.room_id}] | Jugadores: {len(self.remote_players) + 1}", True, COLOR_TEXT_MUTED), (25, 38))
+            screen.blit(font_small.render("Controles: [WASD] Mover | [SHIFT] Dash | [Espacio/R/F] Acciones 3R en zonas", True, (203, 213, 225)), (25, 58))
 
-            screen.blit(font_large.render(f"PUNTOS: {self.team_score}", True, (250, 204, 21)), (450, 15))
-            screen.blit(font_small.render(f"Ahorro: {self.liters_saved:.0f} L | Tiempo: {self.remaining_seconds}s", True, (52, 211, 153)), (450, 45))
+            screen.blit(font_large.render(f"PUNTOS: {self.team_score}", True, (250, 204, 21)), (430, 15))
+            screen.blit(font_small.render(f"Ahorro: {self.liters_saved:.0f} L | Tiempo: {self.remaining_seconds}s", True, (52, 211, 153)), (430, 45))
 
-            # Widget Ping
-            ping_color = COLOR_PING_GOOD if self.rtt_ms < 60 else (COLOR_PING_WARN if self.rtt_ms < 150 else COLOR_PING_BAD)
-            pygame.draw.rect(screen, (10, 14, 26), (WINDOW_WIDTH - 200, 12, 175, 60), border_radius=8)
-            pygame.draw.rect(screen, ping_color, (WINDOW_WIDTH - 200, 12, 175, 60), 2, border_radius=8)
-            screen.blit(font_mono.render(f"PING: {self.rtt_ms} ms", True, ping_color), (WINDOW_WIDTH - 185, 20))
-            status_txt = "EN VIVO 20Hz" if self.is_connected else "RECONECTANDO"
-            screen.blit(font_small.render(status_txt, True, ping_color), (WINDOW_WIDTH - 185, 44))
+            # Simulación local en caso de desconexión (contingencia sin freeze)
+            if not self.is_connected:
+                self.remaining_seconds = max(0, self.remaining_seconds - dt * 0.2)
+                has_leak = any(p.is_leaking for p in self.pipes)
+                if has_leak:
+                    self.reservoir_pct = max(5.0, self.reservoir_pct - dt * 0.3)
+
+            # Widget Ping & Estado de Red
+            active_node = self.host_list[self.current_host_idx % len(self.host_list)]
+            if self.is_connected:
+                ping_color = COLOR_PING_GOOD if self.rtt_ms < 60 else (COLOR_PING_WARN if self.rtt_ms < 150 else COLOR_PING_BAD)
+                status_txt = f"EN VIVO ({active_node})"
+                ping_txt = f"PING: {self.rtt_ms} ms"
+            else:
+                ping_color = (251, 146, 60) # Naranja ámbar
+                status_txt = f"FAILOVER -> {active_node}"
+                ping_txt = "RECONECTANDO..."
+
+            pygame.draw.rect(screen, (10, 14, 26), (WINDOW_WIDTH - 230, 12, 215, 60), border_radius=8)
+            pygame.draw.rect(screen, ping_color, (WINDOW_WIDTH - 230, 12, 215, 60), 2, border_radius=8)
+            screen.blit(font_mono.render(ping_txt, True, ping_color), (WINDOW_WIDTH - 215, 20))
+            screen.blit(font_small.render(status_txt, True, ping_color), (WINDOW_WIDTH - 215, 44))
+
+            # Banner no bloqueante de corte de red (Prueba del Profesor)
+            if not self.is_connected:
+                banner_rect = pygame.Rect(260, 52, 450, 24)
+                pygame.draw.rect(screen, (154, 52, 18), banner_rect, border_radius=6)
+                pygame.draw.rect(screen, (249, 115, 22), banner_rect, 1, border_radius=6)
+                screen.blit(font_small.render("⚠️ CORTE DE RED: Failover activo hacia nodo de respaldo", True, (255, 255, 255)), (270, 56))
 
             pygame.display.flip()
 
         pygame.quit()
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="EcoStream 3R - Cliente de Juego")
+    parser = argparse.ArgumentParser(description="EcoStream 3R - Cliente de Juego Multi-Host Resiliente")
     parser.add_argument("--bot", action="store_true", help="Activa el modo bot automático para pruebas de carga")
     parser.add_argument("--headless", action="store_true", help="Ejecutar en modo consola sin interfaz gráfica Pygame")
     parser.add_argument("--duration", type=float, default=None, help="Duración en segundos para la ejecución headless")
-    parser.add_argument("--host", default="localhost:50052", help="Host gRPC del motor Rust")
+    parser.add_argument("--host", default="localhost:50051", help="Host gRPC del motor primario")
+    parser.add_argument("--hosts", default="", help="Lista de hosts para failover separados por coma (ej: 192.168.1.10:50051,192.168.1.11:50051)")
     parser.add_argument("--room", default="rm_demo_01", help="ID de la sala")
     parser.add_argument("--player", default="usr_victor_admin", help="ID del jugador")
     args = parser.parse_args()
 
     client = EcoStreamGameClient(
         host=args.host,
+        hosts=args.hosts,
         room_id=args.room,
         player_id=args.player,
         is_bot=args.bot

@@ -91,13 +91,21 @@
   <main>
     <canvas id="gameCanvas"></canvas>
 
+    <!-- BANNER DE RESILIENCIA Y CORTE DE RED FÍSICO (NO BLOQUEANTE) -->
+    <div id="netStatusBanner" class="net-status-banner hidden">
+      <span class="net-banner-icon">⚠️</span>
+      <span id="netBannerText">Enlace de red interrumpido (Corte físico o caída de nodo detectada). El juego continúa en modo local y se reconectará en background...</span>
+      <span class="net-banner-badge">Modo Resiliente</span>
+    </div>
+
     <!-- NOTIFICACIONES TOAST FLOTANTES -->
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- PANEL INFORMATIVO Y GUÍA DE TECLAS -->
     <div class="legend-panel">
       <div class="legend-title">🎮 Controles Rápidos</div>
-      <div class="legend-item"><span class="key-badge">WASD</span> Mover Guardián</div>
+      <div class="legend-item"><span class="key-badge">WASD</span> Mover Guardián (Fluido)</div>
+      <div class="legend-item"><span class="key-badge">SHIFT</span> ⚡ Impulso / Dash Rápido</div>
       <div class="legend-item"><span class="key-badge">ESPACIO</span> 1. Reducir / Reparar</div>
       <div class="legend-item"><span class="key-badge">R</span> 2. Reusar a Huertos</div>
       <div class="legend-item"><span class="key-badge">F</span> 3. Reciclar Filtros</div>

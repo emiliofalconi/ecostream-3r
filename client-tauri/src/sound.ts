@@ -249,6 +249,48 @@ class SoundFX {
     osc.stop(this.ctx.currentTime + 0.28);
   }
 
+  // 12. Sonido de Impulso / Dash Rápido
+  public playDash() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(440, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(120, this.ctx.currentTime + 0.18);
+
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.18);
+
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.18);
+  }
+
+  // 13. Sonido de Coleccionable (Eco-Kit / Herramientas)
+  public playCollect() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+
+    const freqs = [523.25, 659.25, 783.99, 1046.5]; // C5, E5, G5, C6 (Arpegio Mayor)
+    freqs.forEach((f, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(f, this.ctx!.currentTime + i * 0.04);
+      gain.gain.setValueAtTime(0.12, this.ctx!.currentTime + i * 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx!.currentTime + i * 0.04 + 0.14);
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(this.ctx!.currentTime + i * 0.04);
+      osc.stop(this.ctx!.currentTime + i * 0.04 + 0.14);
+    });
+  }
+
   // 11. Murmullo de Agua Ambiental Procedural (Breeze & River)
   public toggleAmbience(enable: boolean) {
     if (!enable) {
@@ -276,6 +318,44 @@ class SoundFX {
     this.ambienceOsc.connect(this.ambienceGain);
     this.ambienceGain.connect(this.ctx.destination);
     this.ambienceOsc.start();
+  }
+
+  // 12. Sonido Fanfarria Triple-R Combo
+  public playCombo() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    [523.25, 659.25, 783.99, 1046.5, 1318.51].forEach((f, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(f, this.ctx!.currentTime + i * 0.05);
+      gain.gain.setValueAtTime(0.16, this.ctx!.currentTime + i * 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.ctx!.currentTime + i * 0.05 + 0.18);
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(this.ctx!.currentTime + i * 0.05);
+      osc.stop(this.ctx!.currentTime + i * 0.05 + 0.18);
+    });
+  }
+
+  // 13. Sonido Alarma de Evento de Caos
+  public playChaosAlarm() {
+    if (!this.enabled) return;
+    this.init();
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(320, this.ctx.currentTime);
+    osc.frequency.linearRampToValueAtTime(640, this.ctx.currentTime + 0.2);
+    osc.frequency.linearRampToValueAtTime(320, this.ctx.currentTime + 0.4);
+    gain.gain.setValueAtTime(0.15, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.45);
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.45);
   }
 }
 

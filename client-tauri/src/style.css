@@ -755,3 +755,64 @@ main {
   padding: 12px;
 }
 
+/* ==========================================================================
+   BANNER DE CORTE DE RED FÍSICO Y TOLERANCIA A FALLOS (FAIL-SAFE)
+   ========================================================================== */
+.net-status-banner {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(185, 28, 28, 0.92);
+  border: 1px solid #ef4444;
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 4px 25px rgba(239, 68, 68, 0.5);
+  backdrop-filter: blur(12px);
+  z-index: 100;
+  transition: all 0.3s ease;
+  animation: bannerPulse 2s infinite ease-in-out;
+}
+
+.net-status-banner.hidden {
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, -20px);
+}
+
+.net-banner-icon {
+  font-size: 18px;
+  animation: shake 1.5s infinite;
+}
+
+.net-banner-badge {
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+@keyframes bannerPulse {
+  0%, 100% {
+    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    box-shadow: 0 0 30px rgba(239, 68, 68, 0.8);
+  }
+}
+
+@keyframes shake {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-8deg); }
+  75% { transform: rotate(8deg); }
+}
+
