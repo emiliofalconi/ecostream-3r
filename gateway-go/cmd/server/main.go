@@ -43,6 +43,11 @@ func main() {
 	}
 	defer db.Close()
 
+	// 2.1 Automigración Idempotente de Esquema y Datos de Semilla
+	if err := db.AutoMigrate(context.Background()); err != nil {
+		log.Printf("[WARN] [DB] No se pudo ejecutar AutoMigrate: %v", err)
+	}
+
 	// 3. Conectar a Redis (con soporte de degradación suave)
 	redisClient, err := storage.NewRedisClient(cfg.RedisURL)
 	if err != nil {
