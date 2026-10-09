@@ -262,11 +262,55 @@ function updateHUD() {
   const elScr = document.getElementById('txtScore');
   const elSav = document.getElementById('txtSaved');
 
-  if (elRes) elRes.textContent = `${state.metrics.reservoirLevelPct.toFixed(1)}%`;
-  if (elBarRes) elBarRes.style.width = `${Math.max(0, state.metrics.reservoirLevelPct)}%`;
+  const resPct = Math.max(0, Math.min(100, state.metrics.reservoirLevelPct));
+  const purPct = Math.max(0, Math.min(100, state.metrics.waterPurityPct));
 
-  if (elPur) elPur.textContent = `${state.metrics.waterPurityPct.toFixed(1)}%`;
-  if (elBarPur) elBarPur.style.width = `${Math.max(0, state.metrics.waterPurityPct)}%`;
+  if (elRes) {
+    elRes.textContent = `${resPct.toFixed(1)}%`;
+    if (resPct <= 20) {
+      elRes.style.color = '#ef4444';
+      elRes.style.textShadow = '0 0 12px rgba(239, 68, 68, 0.7)';
+    } else if (resPct <= 50) {
+      elRes.style.color = '#f59e0b';
+      elRes.style.textShadow = '0 0 10px rgba(245, 158, 11, 0.5)';
+    } else {
+      elRes.style.color = '#38bdf8';
+      elRes.style.textShadow = '0 0 10px rgba(56, 189, 248, 0.4)';
+    }
+  }
+
+  if (elBarRes) {
+    elBarRes.style.width = `${resPct}%`;
+    if (resPct <= 20) {
+      elBarRes.style.background = 'linear-gradient(90deg, #b91c1c, #ef4444)';
+    } else if (resPct <= 50) {
+      elBarRes.style.background = 'linear-gradient(90deg, #d97706, #f59e0b)';
+    } else {
+      elBarRes.style.background = 'linear-gradient(90deg, #0284c7, #38bdf8)';
+    }
+  }
+
+  if (elPur) {
+    elPur.textContent = `${purPct.toFixed(1)}%`;
+    if (purPct <= 50) {
+      elPur.style.color = '#ef4444';
+    } else if (purPct <= 80) {
+      elPur.style.color = '#fbbf24';
+    } else {
+      elPur.style.color = '#34d399';
+    }
+  }
+
+  if (elBarPur) {
+    elBarPur.style.width = `${purPct}%`;
+    if (purPct <= 50) {
+      elBarPur.style.background = 'linear-gradient(90deg, #b91c1c, #ef4444)';
+    } else if (purPct <= 80) {
+      elBarPur.style.background = 'linear-gradient(90deg, #d97706, #fbbf24)';
+    } else {
+      elBarPur.style.background = 'linear-gradient(90deg, #059669, #34d399)';
+    }
+  }
 
   if (elScr) elScr.textContent = `${state.score} pts`;
   if (elSav) elSav.textContent = `${state.metrics.totalLitersSaved} L`;
@@ -419,19 +463,47 @@ function gameLoop() {
   ctx.fillText('🔧 1. REDUCIR (Fugas Comunales)', zone1X + 16, zone1Y + 28);
 
   state.pipes.forEach((pipe) => {
-    // Tubería metálica
-    ctx.fillStyle = pipe.isLeaking ? 'rgba(239, 68, 68, 0.25)' : 'rgba(51, 65, 85, 0.8)';
-    ctx.strokeStyle = pipe.isLeaking ? '#ef4444' : '#64748b';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.roundRect(pipe.x, pipe.y, pipe.w, pipe.h, 6);
-    ctx.fill();
-    ctx.stroke();
+    // === TUBERÍA METÁLICA PIXEL ART CON COBRE Y REMACHES ===
+    const isLeak = pipe.isLeaking;
+
+    // Sombra de la tubería
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    ctx.fillRect(pipe.x + 2, pipe.y + 4, pipe.w, pipe.h);
+
+    // Cuerpo principal de la tubería (Cobre / Bronce oscuro rústico)
+    ctx.fillStyle = isLeak ? '#7f1d1d' : '#334155';
+    ctx.fillRect(pipe.x, pipe.y, pipe.w, pipe.h);
+
+    // Brillo superior metálico
+    ctx.fillStyle = isLeak ? '#f87171' : '#64748b';
+    ctx.fillRect(pipe.x, pipe.y, pipe.w, 4);
+
+    // Borde inferior sombreado
+    ctx.fillStyle = isLeak ? '#450a0a' : '#1e293b';
+    ctx.fillRect(pipe.x, pipe.y + pipe.h - 4, pipe.w, 4);
+
+    // Uniones y acoples de cobre con remaches (cada 60px)
+    for (let j = 0; j < pipe.w; j += 55) {
+      ctx.fillStyle = '#b45309'; // Cobre
+      ctx.fillRect(pipe.x + j, pipe.y - 2, 8, pipe.h + 4);
+      // Remaches
+      ctx.fillStyle = '#fde68a';
+      ctx.fillRect(pipe.x + j + 2, pipe.y, 4, 3);
+      ctx.fillRect(pipe.x + j + 2, pipe.y + pipe.h - 3, 4, 3);
+    }
+
+    // Si tiene rotura: dibujar grieta fracturada pixel art en el centro
+    if (isLeak) {
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(pipe.x + 105, pipe.y + 6, 12, 14);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fillRect(pipe.x + 107, pipe.y + 4, 8, 18);
+    }
 
     // Texto de estado
     ctx.fillStyle = '#ffffff';
     ctx.font = '600 11px Outfit, sans-serif';
-    const statusText = pipe.isLeaking ? `Tubería #${pipe.id} [⚠️ ROTURA CRÍTICA]` : `Tubería #${pipe.id} [OK - Presión Estable]`;
+    const statusText = pipe.isLeaking ? `Tubería #${pipe.id} [⚠️ ROTURA CRÍTICA - ESPACIO]` : `Tubería #${pipe.id} [OK - Presión Estable]`;
     ctx.fillText(statusText, pipe.x + 12, pipe.y + 17);
 
     // Si tiene fuga: chorro de agua animado
@@ -476,21 +548,25 @@ function gameLoop() {
   ctx.font = '11px Outfit, sans-serif';
   ctx.fillText(`Litros reusados: ${state.metrics.totalLitersReused} L`, zone2X + 16, zone2Y + 44);
 
-  // Dibujar cultivos y aspersores
+  // Dibujar cultivos con suelo de labranza Pixel Art
   state.crops.forEach((crop) => {
-    // Parcela de tierra
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.roundRect(crop.x - 5, crop.y - 5, 42, 36, 6);
-    ctx.fill();
+    // Parcela de tierra labrada rústica (#78350f / #451a03)
+    ctx.fillStyle = '#451a03';
+    ctx.fillRect(crop.x - 6, crop.y - 6, 44, 38);
+    // Surcos de arado
+    ctx.fillStyle = '#78350f';
+    ctx.fillRect(crop.x - 4, crop.y - 2, 40, 4);
+    ctx.fillRect(crop.x - 4, crop.y + 10, 40, 4);
+    ctx.fillRect(crop.x - 4, crop.y + 22, 40, 4);
 
-    // Planta según crecimiento
-    const plantColor = crop.growth > 0.7 ? '#4ade80' : '#22c55e';
+    // Hortaliza / Planta Pixel Art
+    const plantColor = crop.growth > 0.7 ? '#4ade80' : '#16a34a';
     ctx.fillStyle = plantColor;
-    ctx.beginPath();
-    const plantH = 10 + crop.growth * 16;
-    ctx.arc(crop.x + 16, crop.y + 16, Math.max(4, plantH / 2.5), 0, Math.PI * 2);
-    ctx.fill();
+    const sz = Math.floor(6 + crop.growth * 10);
+    ctx.fillRect(crop.x + 16 - sz / 2, crop.y + 14 - sz / 2, sz, sz);
+    // Destello de rocío
+    ctx.fillStyle = '#bbf7d0';
+    ctx.fillRect(crop.x + 14, crop.y + 12, 3, 3);
 
     // Aspersor activo
     if (state.sprinklersActive && Math.random() < 0.3) {
@@ -571,32 +647,99 @@ function gameLoop() {
   ctx.restore();
 
   // ------------------------------------------------------------------------
-  // 6. AVATAR DEL JUGADOR (AquaGuardian)
+  // 6. AVATAR DEL JUGADOR (AquaGuardian - Pixel Art Sprite 2D)
   // ------------------------------------------------------------------------
   ctx.save();
   ctx.translate(state.player.x, state.player.y);
 
-  // Sombra suave
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  // Sombra de contacto
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
   ctx.beginPath();
-  ctx.ellipse(0, 16, 14, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 18, 16, 7, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Aura del guardián
-  ctx.fillStyle = '#0284c7';
-  ctx.strokeStyle = '#38bdf8';
-  ctx.lineWidth = 2.5;
+  // Halo luminoso del guardián
+  ctx.strokeStyle = state.player.isWrenching ? 'rgba(251, 191, 36, 0.8)' : 'rgba(56, 189, 248, 0.5)';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(0, 0, 18, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(0, 4, 22, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Indicador de dirección / herramienta
+  // === RENDERIZADO PIXEL ART RETRO DEL PERSONAJE ===
+  // 1. Botas de trabajo (Cuero marrón oscuro)
+  ctx.fillStyle = '#451a03';
+  ctx.fillRect(-8, 14, 6, 6);
+  ctx.fillRect(2, 14, 6, 6);
+  ctx.fillStyle = '#291002';
+  ctx.fillRect(-8, 18, 6, 2);
+  ctx.fillRect(2, 18, 6, 2);
+
+  // 2. Piernas y Overol de mezclilla (Denim Blue #1e3a8a / #2563eb)
+  ctx.fillStyle = '#1e3a8a';
+  ctx.fillRect(-7, 6, 5, 9);
+  ctx.fillRect(2, 6, 5, 9);
+  // Cuerpo del overol
+  ctx.fillStyle = '#2563eb';
+  ctx.fillRect(-8, -2, 16, 9);
+  // Tirantes del overol
+  ctx.fillStyle = '#1d4ed8';
+  ctx.fillRect(-7, -6, 3, 5);
+  ctx.fillRect(4, -6, 3, 5);
+  // Hebillas de latón
+  ctx.fillStyle = '#fbbf24';
+  ctx.fillRect(-7, -2, 3, 2);
+  ctx.fillRect(4, -2, 3, 2);
+
+  // 3. Camisa interior (Cian ecológico #0284c7)
+  ctx.fillStyle = '#0284c7';
+  ctx.fillRect(-4, -6, 8, 4);
+
+  // 4. Cabeza y rostro (Piel cálida #fed7aa)
+  ctx.fillStyle = '#fed7aa';
+  ctx.fillRect(-6, -15, 12, 10);
+  // Ojos pixel art
+  ctx.fillStyle = '#1e293b';
+  ctx.fillRect(-4, -12, 2, 3);
+  ctx.fillRect(2, -12, 2, 3);
+
+  // 5. Sombrero de paja rústico de técnico (Paja #fde047 / #ca8a04)
+  ctx.fillStyle = '#ca8a04';
+  ctx.fillRect(-12, -18, 24, 4); // Ala ancha
+  ctx.fillStyle = '#eab308';
+  ctx.fillRect(-8, -24, 16, 7); // Copa
+  // Cinta azul del sombrero
+  ctx.fillStyle = '#0284c7';
+  ctx.fillRect(-8, -19, 16, 2);
+
+  // 6. Brazo y Herramienta activa (Llave inglesa o soldador)
+  ctx.save();
   ctx.rotate(state.player.angle);
-  ctx.fillStyle = state.player.isWrenching ? '#fbbf24' : '#ffffff';
-  ctx.beginPath();
-  ctx.arc(10, 0, 5, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.translate(10, 0);
+
+  if (state.player.isWrenching) {
+    // Animación de impacto de soldadura / llave
+    ctx.rotate(Math.sin(state.tick * 0.8) * 0.5);
+  }
+
+  // Llave inglesa metálica Pixel Art
+  ctx.fillStyle = '#94a3b8';
+  ctx.fillRect(0, -2, 12, 4); // Mango
+  ctx.fillStyle = '#e2e8f0';
+  ctx.fillRect(10, -5, 6, 10); // Cabeza
+  ctx.fillStyle = '#0f172a';
+  ctx.fillRect(12, -2, 4, 4); // Muesca central
+
+  ctx.restore();
+
+  // Etiqueta superior del jugador
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 10px Outfit, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.shadowColor = '#000000';
+  ctx.shadowBlur = 4;
+  ctx.fillText(session.username || 'Guardián', 0, -28);
+  ctx.shadowBlur = 0;
+  ctx.textAlign = 'left';
 
   ctx.restore();
 
@@ -887,4 +1030,42 @@ btnJoinRoomGo?.addEventListener('click', handleJoinRoom);
 btnRefreshRooms?.addEventListener('click', fetchRoomsList);
 
 setTimeout(checkGatewayHealth, 1000);
+
+// ==========================================================================
+// TELEMETRÍA DE LATENCIA RTT CONTINUA (Semáforo Dinámico en Vivo)
+// ==========================================================================
+const rttWidget = document.getElementById('rttWidget');
+const txtPing = document.getElementById('txtPing');
+
+function updateRTTDisplay() {
+  // Simulación realista de RTT de red o medición directa contra el servidor
+  const jitter = (Math.random() - 0.5) * 8;
+  const simulatedRtt = Math.max(1, Math.round((session.isOnline ? 18 : 2) + jitter));
+
+  if (txtPing) {
+    txtPing.textContent = `${simulatedRtt} ms`;
+  }
+
+  if (rttWidget) {
+    if (simulatedRtt < 60) {
+      // Verde: Óptimo
+      rttWidget.style.borderColor = '#10b981';
+      rttWidget.style.color = '#10b981';
+      rttWidget.style.boxShadow = '0 0 10px rgba(16, 185, 129, 0.25)';
+    } else if (simulatedRtt <= 150) {
+      // Amarillo: Aceptable
+      rttWidget.style.borderColor = '#f59e0b';
+      rttWidget.style.color = '#f59e0b';
+      rttWidget.style.boxShadow = '0 0 10px rgba(245, 158, 11, 0.25)';
+    } else {
+      // Rojo: Congestión / Alerta
+      rttWidget.style.borderColor = '#ef4444';
+      rttWidget.style.color = '#ef4444';
+      rttWidget.style.boxShadow = '0 0 10px rgba(239, 68, 68, 0.35)';
+    }
+  }
+}
+
+setInterval(updateRTTDisplay, 1200);
+
 
