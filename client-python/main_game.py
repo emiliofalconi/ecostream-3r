@@ -12,9 +12,11 @@ Edición Gráfica Mejorada:
 import sys
 import time
 import math
+import heapq
 import random
 import argparse
 import threading
+from typing import List, Tuple, Optional, Set
 from pathlib import Path
 
 # Configurar path de stubs proto
@@ -198,43 +200,175 @@ class EcoStreamGameClient:
             c = random.choice([(250, 204, 21), (56, 189, 248), (255, 255, 255)])
             self.particles.append(Particle(x, y, vx, vy, c, random.randint(2, 4), 1.0))
 
+    def _world_to_grid(self, x: float, y: float, cell_size: int = 30) -> Tuple[int, int]:
+        return int(x // cell_size), int(y // cell_size)
+
+    def _grid_to_world(self, gx: int, gy: int, cell_size: int = 30) -> Tuple[float, float]:
+        return float(gx * cell_size + cell_size / 2), float(gy * cell_size + cell_size / 2)
+
+    def _get_obstacles(self, cell_size: int = 30) -> Set[Tuple[int, int]]:
+        """Obstáculos estáticos del mapa: embalse central y bordes"""
+        obstacles = set()
+        # Embalse izquierdo (X: 30 a 270, Y: 110 a 640)
+        min_gx, min_gy = self._world_to_grid(30, 110, cell_size)
+        max_gx, max_gy = self._world_to_grid(270, 640, cell_size)
+        for gx in range(min_gx, max_gx + 1):
+            for gy in range(min_gy, max_gy + 1):
+                obstacles.add((gx, gy))
+
+        # Bordes de la ventana
+        max_w_g = WINDOW_WIDTH // cell_size
+        max_h_g = WINDOW_HEIGHT // cell_size
+        for gx in range(max_w_g):
+            obstacles.add((gx, 0))
+            obstacles.add((gx, max_h_g - 1))
+        for gy in range(max_h_g):
+            obstacles.add((0, gy))
+            obstacles.add((max_w_g - 1, gy))
+
+        return obstacles
+
+    def astar_pathfind(self, start_pos: Tuple[float, float], target_pos: Tuple[float, float]) -> List[Tuple[float, float]]:
+        """
+        Algoritmo A* (A-Star) en cuadrícula 2D con distancia euclidiana como heurística.
+        Calcula la ruta más corta evitando obstáculos del mapa de juego.
+        """
+        cell_size = 25
+        start_node = self._world_to_grid(start_pos[0], start_pos[1], cell_size)
+        target_node = self._world_to_grid(target_pos[0], target_pos[1], cell_size)
+
+        if start_node == target_node:
+            return [target_pos]
+
+        obstacles = self._get_obstacles(cell_size)
+
+        # Priority Queue: (f_score, g_score, current_node)
+        open_set = []
+        heapq.heappush(open_set, (0.0, 0.0, start_node))
+        came_from = {}
+        g_scores = {start_node: 0.0}
+
+        def heuristic(a: Tuple[int, int], b: Tuple[int, int]) -> float:
+            # Distancia euclidiana
+            return math.hypot(a[0] - b[0], a[1] - b[1])
+
+        # Movimientos ortogonales y diagonales (8 direcciones)
+        directions = [
+            (0, 1, 1.0), (1, 0, 1.0), (0, -1, 1.0), (-1, 0, 1.0),
+            (1, 1, 1.414), (-1, 1, 1.414), (1, -1, 1.414), (-1, -1, 1.414)
+        ]
+
+        max_iterations = 800
+        iterations = 0
+
+        while open_set and iterations < max_iterations:
+            iterations += 1
+            _, current_g, current = heapq.heappop(open_set)
+
+            if current == target_node:
+                # Reconstruir camino
+                path = []
+                curr = current
+                while curr in came_from:
+                    path.append(self._grid_to_world(curr[0], curr[1], cell_size))
+                    curr = came_from[curr]
+                path.reverse()
+                path.append(target_pos)
+                return path
+
+            for dx, dy, cost in directions:
+                neighbor = (current[0] + dx, current[1] + dy)
+                if neighbor in obstacles and neighbor != target_node:
+                    continue
+
+                tentative_g = current_g + cost
+                if tentative_g < g_scores.get(neighbor, float('inf')):
+                    came_from[neighbor] = current
+                    g_scores[neighbor] = tentative_g
+                    f_score = tentative_g + heuristic(neighbor, target_node)
+                    heapq.heappush(open_set, (f_score, tentative_g, neighbor))
+
+        # Fallback de línea recta si no hay camino en la cuadrícula
+        return [target_pos]
+
     def bot_ai_tick(self):
-        """Lógica de IA del Bot para pruebas automáticas de estrés y 3R"""
+        """
+        Lógica de IA del Bot con A* (Pathfinding Autónomo):
+        1. Detecta automáticamente la rotura/fuga más cercana.
+        2. Calcula la ruta óptima evitando colisiones con A*.
+        3. Camina hacia el punto y envía la acción RepairPipeAction.
+        4. Si no hay fugas, asiste en Reusar (válvulas) y Reciclar (planta).
+        """
         leaking_pipes = [p for p in self.pipes if p.is_leaking]
+
         if leaking_pipes:
-            target = leaking_pipes[0]
-            tx = 420.0
-            ty = 180.0 + (target.pipe_id - 1) * 60.0
+            # Detectar la fuga MÁS CERCANA al bot
+            def pipe_distance(p):
+                target_x = 420.0
+                target_y = 180.0 + (p.pipe_id - 1) * 60.0
+                return math.hypot(target_x - self.player_x, target_y - self.player_y)
 
-            dx = tx - self.player_x
-            dy = ty - self.player_y
-            dist = math.hypot(dx, dy)
+            closest_pipe = min(leaking_pipes, key=pipe_distance)
+            target_x = 420.0
+            target_y = 180.0 + (closest_pipe.pipe_id - 1) * 60.0
 
-            if dist > 35.0:
-                self.player_x += (dx / dist) * 4.5
-                self.player_y += (dy / dist) * 4.5
+            dist_to_target = math.hypot(target_x - self.player_x, target_y - self.player_y)
+
+            # Si está fuera del rango de reparación, navegar usando A*
+            if dist_to_target > 28.0:
+                # Si no hay ruta calculada o cambió de objetivo, recalcular A*
+                if not getattr(self, "bot_path", None) or getattr(self, "bot_target_pipe", None) != closest_pipe.pipe_id:
+                    self.bot_path = self.astar_pathfind((self.player_x, self.player_y), (target_x, target_y))
+                    self.bot_target_pipe = closest_pipe.pipe_id
+
+                # Avanzar hacia el siguiente waypoint del camino A*
+                if self.bot_path:
+                    next_wp = self.bot_path[0]
+                    wp_dx = next_wp[0] - self.player_x
+                    wp_dy = next_wp[1] - self.player_y
+                    wp_dist = math.hypot(wp_dx, wp_dy)
+
+                    if wp_dist < 10.0:
+                        self.bot_path.pop(0)
+                    else:
+                        step = min(5.0, wp_dist)
+                        self.player_x += (wp_dx / wp_dist) * step
+                        self.player_y += (wp_dy / wp_dist) * step
             else:
+                # Rango alcanzado: Ejecutar reparación autoritativa
+                self.bot_path = []
                 self.spawn_sparks(self.player_x, self.player_y)
                 self.queue_action(gameplay_pb2.PlayerAction(
-                    action_id=int(time.time()*1000),
-                    repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=target.pipe_id, repair_progress_delta=40.0)
+                    action_id=int(time.time() * 1000),
+                    repair_pipe=gameplay_pb2.RepairPipeAction(
+                        pipe_id=closest_pipe.pipe_id,
+                        repair_progress_delta=50.0
+                    )
                 ))
-                self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
+                self.floating_texts.append(FloatingText(
+                    f"+150 PTS [A* Fuga #{closest_pipe.pipe_id} Sellada]",
+                    self.player_x - 50, self.player_y - 25, (56, 189, 248)
+                ))
             return
 
-        # Reusar o Reciclar
-        if self.tick % 45 == 0 and self.valves:
+        # Si no hay fugas, limpiar ruta y patrullar tareas secundarias
+        self.bot_path = []
+        self.bot_target_pipe = None
+
+        # Reusar aguas residuales a huertos
+        if self.tick % 50 == 0 and self.valves:
             self.queue_action(gameplay_pb2.PlayerAction(
-                action_id=int(time.time()*1000),
+                action_id=int(time.time() * 1000),
                 divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
             ))
-            self.floating_texts.append(FloatingText("+60 PTS (Aguas Reusadas 🌱)", self.player_x - 30, self.player_y - 20, (52, 211, 153)))
-        elif self.tick % 65 == 0 and self.plants:
+            self.floating_texts.append(FloatingText("+60 PTS [A* Riego Huerto 🌱]", self.player_x - 30, self.player_y - 20, (52, 211, 153)))
+        # Reciclar en planta biológica
+        elif self.tick % 70 == 0 and self.plants:
             self.queue_action(gameplay_pb2.PlayerAction(
-                action_id=int(time.time()*1000),
+                action_id=int(time.time() * 1000),
                 operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
             ))
-            self.floating_texts.append(FloatingText("+100 PTS (Filtro Activo ⚗️)", self.player_x - 30, self.player_y - 20, (192, 132, 252)))
+            self.floating_texts.append(FloatingText("+100 PTS [A* Filtro UV ⚗️]", self.player_x - 30, self.player_y - 20, (192, 132, 252)))
 
     def run(self):
         pygame.init()
