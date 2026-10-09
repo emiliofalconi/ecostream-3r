@@ -1,0 +1,78 @@
+# ==============================================================================
+# EcoStream-3R: Render.com Infrastructure as Code (Blueprint)
+# Cátedra: Computación en la Nube (UCAB)
+# ==============================================================================
+
+databases:
+  - name: ecostream-postgres
+    databaseName: ecostream_db
+    user: ecostream_user
+    plan: free
+    region: oregon
+    postgresMajorVersion: "16"
+
+services:
+  # 1. Redis In-Memory Cache (Managed Redis con LRU eviction)
+  - type: redis
+    name: ecostream-redis
+    plan: free
+    region: oregon
+    maxmemoryPolicy: allkeys-lru
+    ipAllowList: [] # Restringido exclusivamente a la red privada interna
+
+  # 2. Go API Gateway & Matchmaking (Web Service Público HTTP/REST)
+  - type: web
+    name: ecostream-gateway
+    env: docker
+    dockerfilePath: ./gateway-go/Dockerfile
+    dockerContext: ./gateway-go
+    plan: free
+    region: oregon
+    healthCheckPath: /healthz
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: GATEWAY_GRPC_PORT
+        value: "50051"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ecostream-postgres
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: ecostream-redis
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: HMAC_SECRET
+        generateValue: true
+      - key: SIMULATION_ENGINE_URL
+        value: ecostream-engine:50052
+      - key: SIMULATION_PUBLIC_ENDPOINT
+        value: ecostream-engine.onrender.com:443
+      - key: ENABLE_MDNS
+        value: "false" # Deshabilitado en la nube (la nube usa dominios DNS públicos)
+
+  # 3. Rust Simulation Engine (Web Service Público gRPC HTTP/2 a 20 Hz)
+  - type: web
+    name: ecostream-engine
+    env: docker
+    dockerfilePath: ./engine-rust/Dockerfile
+    dockerContext: ./engine-rust
+    plan: free
+    region: oregon
+    envVars:
+      - key: PORT
+        value: "50052"
+      - key: TICK_RATE_HZ
+        value: "20"
+      - key: RECONNECT_GRACE_SECONDS
+        value: "10"
+      - key: HMAC_SECRET
+        fromService:
+          type: web
+          name: ecostream-gateway
+          envVarKey: HMAC_SECRET
+      - key: GATEWAY_INTERNAL_URL
+        value: http://ecostream-gateway:50051

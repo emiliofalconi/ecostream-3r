@@ -11,7 +11,9 @@ pub struct Config {
 
 impl Config {
     pub fn from_env() -> Self {
-        let simulation_port = env::var("SIMULATION_GRPC_PORT")
+        // En Render o entornos PaaS estándar, el puerto del contenedor se asigna en PORT
+        let simulation_port = env::var("PORT")
+            .or_else(|_| env::var("SIMULATION_GRPC_PORT"))
             .ok()
             .and_then(|p| p.parse().ok())
             .unwrap_or(50052);
@@ -39,5 +41,24 @@ impl Config {
             hmac_secret,
             gateway_internal_url,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_port_and_defaults() {
+        env::remove_var("PORT");
+        env::remove_var("SIMULATION_GRPC_PORT");
+        let cfg = Config::from_env();
+        assert_eq!(cfg.simulation_port, 50052);
+        assert_eq!(cfg.tick_rate_hz, 20);
+
+        env::set_var("PORT", "50099");
+        let cfg_override = Config::from_env();
+        assert_eq!(cfg_override.simulation_port, 50099);
+        env::remove_var("PORT");
     }
 }

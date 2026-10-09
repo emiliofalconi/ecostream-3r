@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -20,6 +21,7 @@ import (
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/coordinator"
 	internalhttp "github.com/Makmadon/ecostream-3r/gateway-go/internal/http"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/matchmaking"
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/mdns"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/storage"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workerpool"
 	ecostreamv1 "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1"
@@ -58,7 +60,7 @@ func main() {
 	// 6. Servicios de Dominio
 	authService := auth.NewService(db, jwtManager, pool)
 	matchRepo := matchmaking.NewRepository(db)
-	matchService := matchmaking.NewService(matchRepo, redisClient, ticketManager, pool, cfg.SimulationEngineURL)
+	matchService := matchmaking.NewService(matchRepo, redisClient, ticketManager, pool, cfg.SimulationPublicEndpoint)
 
 	// 7. Handlers gRPC
 	authGRPCHandler := auth.NewGRPCHandler(authService)
@@ -103,12 +105,31 @@ func main() {
 		}
 	}()
 
-	// 10. Gestión de Señales para Graceful Shutdown
+	// 10. Iniciar Servicio mDNS ZeroConf en LAN (si está habilitado)
+	var mdnsServer *mdns.Server
+	if cfg.EnableMDNS {
+		portInt, _ := strconv.Atoi(cfg.HTTPPort)
+		if portInt == 0 {
+			portInt = 8080
+		}
+		var mdnsErr error
+		mdnsServer, mdnsErr = mdns.Start(cfg.MDNSInstanceName, portInt, cfg.SimulationPort)
+		if mdnsErr != nil {
+			log.Printf("[WARN] [mDNS] No fue posible iniciar anuncio mDNS: %v", mdnsErr)
+		}
+	}
+
+	// 11. Gestión de Señales para Graceful Shutdown
 	stopSig := make(chan os.Signal, 1)
 	signal.Notify(stopSig, syscall.SIGINT, syscall.SIGTERM)
 
 	sig := <-stopSig
 	log.Printf("[INFO] Señal de terminación recibida: %v. Iniciando apagado ordenado...", sig)
+
+	// Apagar anuncio mDNS
+	if mdnsServer != nil {
+		mdnsServer.Shutdown()
+	}
 
 	// Apagar HTTP con timeout
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
