@@ -213,6 +213,13 @@ class EcoBot:
             for resp in responses:
                 self.current_tick = resp.server_tick
 
+                if resp.HasField("initial_snapshot"):
+                    snap = resp.initial_snapshot
+                    if snap.HasField("current_state") and snap.current_state.HasField("water_metrics"):
+                        self.reservoir_pct = snap.current_state.water_metrics.reservoir_level_pct
+                        self.purity_pct = snap.current_state.water_metrics.water_purity_pct
+                    print(f"  {GREEN}✓ Snapshot inicial recibido:{RESET} Embalse={self.reservoir_pct:.1f}% | Pureza={self.purity_pct:.1f}%")
+
                 if resp.HasField("world_state"):
                     ws = resp.world_state
                     pipes_state = list(ws.pipes)
@@ -230,8 +237,8 @@ class EcoBot:
                             self.pos_x = p.position.x
                             self.pos_y = p.position.y
 
-                    # Reporte de telemetría en consola cada 20 ticks (1 segundo)
-                    if self.current_tick % 20 == 0:
+                    # Reporte de telemetría en consola en tick 1 y cada 20 ticks (1 segundo)
+                    if self.current_tick == 1 or self.current_tick % 20 == 0:
                         leaks_count = sum(1 for pipe in pipes_state if pipe.is_leaking)
                         print(
                             f"  [{BOLD}Tick {self.current_tick:04d}{RESET} | RTT: {GREEN}{self.rtt_ms:02d}ms{RESET}] "
@@ -243,25 +250,36 @@ class EcoBot:
                         )
 
                 if resp.HasField("pong"):
-                    self.rtt_ms = int(time.time() * 1000) - resp.pong.echo_client_timestamp_ms
+                    self.rtt_ms = max(1, int(time.time() * 1000) - resp.pong.echo_client_timestamp_ms)
 
                 if time.time() - start_time >= self.duration:
                     print(f"\n{YELLOW}Tiempo límite de simulación alcanzado ({self.duration}s). Finalizando bot...{RESET}")
                     running = False
                     break
 
-            channel.close()
-            print(f"\n{GREEN}{BOLD}=== RESUMEN DE SESIÓN DEL BOT ==={RESET}")
-            print(f"  - Ticks completados: {self.current_tick}")
-            print(f"  - Score final del equipo: {self.team_score}")
-            print(f"  - Nivel de embalse final: {self.reservoir_pct:.1f}%")
-            print(f"  - Pureza hídrica final: {self.purity_pct:.1f}%")
-            print(f"  - Acciones ejecutadas: {self.repairs_done} reparaciones, {self.reuses_done} desvíos, {self.recycles_done} filtrados\n")
-            return True
-
+        except grpc.RpcError as e:
+            # En gRPC bidireccional, el cierre del generador cliente envía END_STREAM.
+            # Si el tiempo ya concluyó o el error contiene END_STREAM, se trata de una salida limpia.
+            is_clean_eof = not running or (time.time() - start_time >= self.duration) or "END_STREAM" in str(e)
+            if not is_clean_eof:
+                print(f"  {RED}✗ Desconexión o error en stream: {e}{RESET}")
+                return False
         except Exception as e:
-            print(f"  {RED}✗ Desconexión o error en stream: {e}{RESET}")
+            print(f"  {RED}✗ Error inesperado en stream: {e}{RESET}")
             return False
+        finally:
+            try:
+                channel.close()
+            except Exception:
+                pass
+
+        print(f"\n{GREEN}{BOLD}=== RESUMEN DE SESIÓN DEL BOT ==={RESET}")
+        print(f"  - Ticks completados: {self.current_tick}")
+        print(f"  - Score final del equipo: {self.team_score}")
+        print(f"  - Nivel de embalse final: {self.reservoir_pct:.1f}%")
+        print(f"  - Pureza hídrica final: {self.purity_pct:.1f}%")
+        print(f"  - Acciones ejecutadas: {self.repairs_done} reparaciones, {self.reuses_done} desvíos, {self.recycles_done} filtrados\n")
+        return True
 
     def _decide_ai_action(self, tick, pipes, valves, plants):
         """Lógica de IA: Prioriza Reducir fugas, Reusar aguas y Reciclar"""
