@@ -107,9 +107,12 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	return &user, token, expiresAt, nil
 }
 
-// Login autentica a un usuario y genera su token JWT
+// Login autentica a un usuario y genera su token JWT (soporta inicio rápido solo con Nickname)
 func (s *Service) Login(ctx context.Context, usernameOrEmail, password string) (*ecostreamv1.UserProfile, string, int64, error) {
 	usernameOrEmail = strings.TrimSpace(usernameOrEmail)
+	if usernameOrEmail == "" {
+		return nil, "", 0, errors.New("nombre de usuario requerido")
+	}
 
 	query := `
 		SELECT id, username, email, password_hash, default_role, games_played, games_won, total_eco_score, created_at
@@ -133,16 +136,19 @@ func (s *Service) Login(ctx context.Context, usernameOrEmail, password string) (
 		&user.TotalEcoScore,
 		&createdAt,
 	)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, "", 0, errors.New("credenciales inválidas")
-		}
+
+	// Si el usuario no existe, auto-registrarlo de inmediato como jugador sin fricción
+	if errors.Is(err, sql.ErrNoRows) {
+		return s.autoRegisterGuest(ctx, usernameOrEmail)
+	} else if err != nil {
 		return nil, "", 0, fmt.Errorf("error al consultar usuario: %w", err)
 	}
 
-	// Verificación estricta mediante bcrypt (sin puertas traseras ni atajos)
-	if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-		return nil, "", 0, errors.New("credenciales inválidas")
+	// Si se proporcionó una contraseña y la cuenta tiene contraseña configurada, verificarla con bcrypt
+	if password != "" && passwordHash != "" {
+		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
+			return nil, "", 0, errors.New("credenciales inválidas")
+		}
 	}
 
 	user.DefaultRole = ecostreamv1.PlayerRole(userRole)
@@ -156,6 +162,87 @@ func (s *Service) Login(ctx context.Context, usernameOrEmail, password string) (
 	if s.workerPool != nil {
 		s.workerPool.Enqueue(workerpool.AuditEvent{
 			EventType: "USER_LOGIN_SUCCESS",
+			Severity:  "INFO",
+			Payload: map[string]interface{}{
+				"user_id":  user.UserId,
+				"username": user.Username,
+			},
+		})
+	}
+
+	return &user, token, expiresAt, nil
+}
+
+func (s *Service) autoRegisterGuest(ctx context.Context, username string) (*ecostreamv1.UserProfile, string, int64, error) {
+	if len(username) < 2 || len(username) > 30 {
+		return nil, "", 0, errors.New("el nombre de usuario debe tener entre 2 y 30 caracteres")
+	}
+
+	userID := "usr_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
+	cleanName := strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-' {
+			return r
+		}
+		return '_'
+	}, username)
+	email := fmt.Sprintf("%s_%s@ecostream.local", strings.ToLower(cleanName), userID[4:10])
+	roleInt := int32(ecostreamv1.PlayerRole_ROLE_GENERALIST)
+
+	insertQuery := `
+		INSERT INTO users (id, username, email, password_hash, default_role, games_played, games_won, total_eco_score, created_at, updated_at)
+		VALUES ($1, $2, $3, '', $4, 0, 0, 0.0, NOW(), NOW())
+		RETURNING id, username, email, default_role, games_played, games_won, total_eco_score, created_at
+	`
+
+	var user ecostreamv1.UserProfile
+	var createdAt time.Time
+	var userRole int32
+
+	err := s.db.DB.QueryRowContext(ctx, insertQuery, userID, username, email, roleInt).Scan(
+		&user.UserId,
+		&user.Username,
+		&user.Email,
+		&userRole,
+		&user.GamesPlayed,
+		&user.GamesWon,
+		&user.TotalEcoScore,
+		&createdAt,
+	)
+	if err != nil {
+		// En caso de concurrencia donde el usuario fue creado milisegundos antes
+		var retryUser ecostreamv1.UserProfile
+		selectQuery := `SELECT id, username, email, default_role, games_played, games_won, total_eco_score, created_at FROM users WHERE username = $1`
+		if retryErr := s.db.DB.QueryRowContext(ctx, selectQuery, username).Scan(
+			&retryUser.UserId,
+			&retryUser.Username,
+			&retryUser.Email,
+			&userRole,
+			&retryUser.GamesPlayed,
+			&retryUser.GamesWon,
+			&retryUser.TotalEcoScore,
+			&createdAt,
+		); retryErr == nil {
+			retryUser.DefaultRole = ecostreamv1.PlayerRole(userRole)
+			retryUser.CreatedAt = createdAt.Format(time.RFC3339)
+			token, expiresAt, tErr := s.jwtManager.GenerateToken(retryUser.UserId, retryUser.Username, int32(retryUser.DefaultRole))
+			if tErr == nil {
+				return &retryUser, token, expiresAt, nil
+			}
+		}
+		return nil, "", 0, fmt.Errorf("error al registrar jugador automático: %w", err)
+	}
+
+	user.DefaultRole = ecostreamv1.PlayerRole(userRole)
+	user.CreatedAt = createdAt.Format(time.RFC3339)
+
+	token, expiresAt, err := s.jwtManager.GenerateToken(user.UserId, user.Username, int32(user.DefaultRole))
+	if err != nil {
+		return nil, "", 0, err
+	}
+
+	if s.workerPool != nil {
+		s.workerPool.Enqueue(workerpool.AuditEvent{
+			EventType: "USER_AUTO_REGISTERED",
 			Severity:  "INFO",
 			Payload: map[string]interface{}{
 				"user_id":  user.UserId,

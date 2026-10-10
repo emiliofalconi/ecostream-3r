@@ -135,9 +135,9 @@ class NetworkVerifier:
 
         return True
 
-    def step_2_auth_login(self, username: str = "admin_eco", password: str = "EcoStream2026!") -> bool:
-        """Autentica un usuario y extrae el token JWT"""
-        print_header("Paso 2: Autenticación y Emisión de Token JWT")
+    def step_2_auth_login(self, username: str = "Jugador_Eco", password: str = "") -> bool:
+        """Autentica un usuario (soporta inicio rápido solo con Nickname) y extrae el token JWT"""
+        print_header("Paso 2: Autenticación por Nickname y Emisión de Token JWT")
         url = f"{self.gateway_url}/api/v1/auth/login"
         payload = json.dumps({"username": username, "password": password}).encode("utf-8")
         headers = {"Content-Type": "application/json"}

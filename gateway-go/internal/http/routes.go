@@ -159,6 +159,7 @@ func (r *Router) registerRoutes() {
 			return
 		}
 		var body struct {
+			Username        string `json:"username"`
 			UsernameOrEmail string `json:"username_or_email"`
 			Password        string `json:"password"`
 		}
@@ -167,7 +168,12 @@ func (r *Router) registerRoutes() {
 			return
 		}
 
-		user, token, expiresAt, err := r.authService.Login(req.Context(), body.UsernameOrEmail, body.Password)
+		identifier := strings.TrimSpace(body.Username)
+		if identifier == "" {
+			identifier = strings.TrimSpace(body.UsernameOrEmail)
+		}
+
+		user, token, expiresAt, err := r.authService.Login(req.Context(), identifier, body.Password)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return
