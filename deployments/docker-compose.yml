@@ -64,12 +64,11 @@ services:
       JWT_EXPIRATION_HOURS: 24
       CORS_ALLOWED_ORIGINS: "*"
       SIMULATION_ENGINE_URL: "engine:50052"
-      SIMULATION_PUBLIC_ENDPOINT: "${SIMULATION_PUBLIC_ENDPOINT:-}"
-      ENABLE_MDNS: "${ENABLE_MDNS:-true}"
+      SIMULATION_PUBLIC_ENDPOINT: "${SIMULATION_PUBLIC_ENDPOINT:-localhost:50052}"
+      ENABLE_MDNS: "${ENABLE_MDNS:-false}"
     ports:
       - "8080:8080"
       - "50051:50051"
-      - "5353:5353/udp" # Puerto Multicast DNS para descubrimiento LAN ZeroConf
     depends_on:
       postgres:
         condition: service_healthy
