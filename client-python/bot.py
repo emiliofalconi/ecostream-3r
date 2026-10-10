@@ -115,7 +115,7 @@ class EcoBot:
                 url = f"{self.gateway_url}/api/v1/rooms/join"
                 payload = json.dumps({
                     "room_code": self.room_code,
-                    "selected_role": self.role
+                    "role": self.role
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=10.0) as resp:
@@ -128,12 +128,12 @@ class EcoBot:
                     print(f"  {GREEN}✓ Unido a sala existente:{RESET} [{self.room_code}] - ID: {self.room_id}")
             else:
                 # Crear nueva sala
-                url = f"{self.gateway_url}/api/v1/rooms"
+                url = f"{self.gateway_url}/api/v1/rooms/create"
                 payload = json.dumps({
                     "room_name": f"Operacion_{self.username}",
-                    "selected_role": self.role,
+                    "role": self.role,
                     "max_players": 4,
-                    "difficulty_level": 1
+                    "difficulty": 1
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
                 with urllib.request.urlopen(req, timeout=10.0) as resp:

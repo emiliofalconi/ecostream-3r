@@ -222,7 +222,7 @@ func (r *Router) registerRoutes() {
 	// -------------------------------------------------------------
 	// Matchmaking y Lobbies HTTP
 	// -------------------------------------------------------------
-	r.mux.HandleFunc("/api/v1/rooms/create", func(w http.ResponseWriter, req *http.Request) {
+	createRoomHandler := func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
 			http.Error(w, "Método no permitido", http.StatusMethodNotAllowed)
 			return
@@ -235,19 +235,30 @@ func (r *Router) registerRoutes() {
 		}
 
 		var body struct {
-			RoomName   string `json:"room_name"`
-			Role       int    `json:"role"`
-			MaxPlayers uint32 `json:"max_players"`
-			Difficulty uint32 `json:"difficulty"`
+			RoomName        string `json:"room_name"`
+			Role            int    `json:"role"`
+			SelectedRole    int    `json:"selected_role"`
+			MaxPlayers      uint32 `json:"max_players"`
+			Difficulty      uint32 `json:"difficulty"`
+			DifficultyLevel uint32 `json:"difficulty_level"`
 		}
 		_ = json.NewDecoder(req.Body).Decode(&body)
 
-		role := ecostreamv1.PlayerRole(body.Role)
+		roleInt := body.Role
+		if roleInt == 0 {
+			roleInt = body.SelectedRole
+		}
+		role := ecostreamv1.PlayerRole(roleInt)
 		if role == ecostreamv1.PlayerRole_ROLE_UNSPECIFIED {
 			role = ecostreamv1.PlayerRole(claims.Role)
 		}
 
-		room, ticket, err := r.matchService.CreateRoom(req.Context(), claims.UserID, claims.Username, body.RoomName, role, body.MaxPlayers, body.Difficulty)
+		diff := body.Difficulty
+		if diff == 0 {
+			diff = body.DifficultyLevel
+		}
+
+		room, ticket, err := r.matchService.CreateRoom(req.Context(), claims.UserID, claims.Username, body.RoomName, role, body.MaxPlayers, diff)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -258,7 +269,10 @@ func (r *Router) registerRoutes() {
 			"room":        room,
 			"room_ticket": ticket,
 		})
-	})
+	}
+
+	r.mux.HandleFunc("/api/v1/rooms/create", createRoomHandler)
+	r.mux.HandleFunc("/api/v1/rooms", createRoomHandler)
 
 	r.mux.HandleFunc("/api/v1/rooms/join", func(w http.ResponseWriter, req *http.Request) {
 		if req.Method != http.MethodPost {
@@ -273,15 +287,20 @@ func (r *Router) registerRoutes() {
 		}
 
 		var body struct {
-			RoomCode string `json:"room_code"`
-			Role     int    `json:"role"`
+			RoomCode     string `json:"room_code"`
+			Role         int    `json:"role"`
+			SelectedRole int    `json:"selected_role"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil || body.RoomCode == "" {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "room_code requerido"})
 			return
 		}
 
-		role := ecostreamv1.PlayerRole(body.Role)
+		roleInt := body.Role
+		if roleInt == 0 {
+			roleInt = body.SelectedRole
+		}
+		role := ecostreamv1.PlayerRole(roleInt)
 		if role == ecostreamv1.PlayerRole_ROLE_UNSPECIFIED {
 			role = ecostreamv1.PlayerRole(claims.Role)
 		}
