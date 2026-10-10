@@ -62,6 +62,7 @@ services:
     dockerContext: ./engine-rust
     plan: free
     region: oregon
+    healthCheckPath: /healthz
     envVars:
       - key: PORT
         value: "50052"

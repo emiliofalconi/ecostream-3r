@@ -52,6 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("[SERVER] Servidor gRPC de Simulación escuchando en {}", addr);
 
     Server::builder()
+        .accept_http1(true)
         .add_service(GameSimulationServiceServer::new(sim_service))
         .add_service(InternalCoordinatorServiceServer::new(coord_service))
         .serve_with_shutdown(addr, async {
