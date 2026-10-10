@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EcoStream 3R - AquaGuardians (Cyber-Eco Web Edition)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <!-- HUD SUPERIOR CON EFECTO GLASSMORPHISM -->
+  <header>
+    <div class="brand">
+      <div class="brand-icon-wrapper">
+        <span class="brand-icon">💧</span>
+      </div>
+      <div>
+        <h1 class="brand-title">EcoStream 3R</h1>
+        <div class="brand-subtitle">
+          <span class="badge-role">AquaGuardian</span>
+          <span>Preservación Hídrica Comunal</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="hud-metrics">
+      <div class="metric-card reservoir">
+        <div class="metric-header">
+          <span class="icon">🌊</span>
+          <span class="metric-label">Embalse Principal</span>
+        </div>
+        <div class="metric-value-row">
+          <span id="txtReservoir" class="metric-value">100.0%</span>
+          <div class="progress-bar-mini">
+            <div id="barReservoir" class="progress-fill" style="width: 100%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metric-card purity">
+        <div class="metric-header">
+          <span class="icon">✨</span>
+          <span class="metric-label">Pureza Hídrica</span>
+        </div>
+        <div class="metric-value-row">
+          <span id="txtPurity" class="metric-value">96.0%</span>
+          <div class="progress-bar-mini">
+            <div id="barPurity" class="progress-fill purity" style="width: 96%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="metric-card score">
+        <div class="metric-header">
+          <span class="icon">🏆</span>
+          <span class="metric-label">Puntaje Eco</span>
+        </div>
+        <span id="txtScore" class="metric-value">0 pts</span>
+      </div>
+
+      <div class="metric-card saved">
+        <div class="metric-header">
+          <span class="icon">🛡️</span>
+          <span class="metric-label">Agua Salvada</span>
+        </div>
+        <span id="txtSaved" class="metric-value">0 L</span>
+      </div>
+
+      <div class="hud-controls">
+        <div id="rttWidget" class="rtt-widget" title="Telemetría de Latencia en Vivo">
+          <div class="rtt-dot"></div>
+          <span id="txtPing">2 ms</span>
+        </div>
+        <button id="btnSoundToggle" class="icon-toggle-btn" title="Activar/Silenciar Audio">
+          🔊
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- LIENZO PRINCIPAL DEL JUEGO -->
+  <main>
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- NOTIFICACIONES TOAST FLOTANTES -->
+    <div id="toastContainer" class="toast-container"></div>
+
+    <!-- PANEL INFORMATIVO Y GUÍA DE TECLAS -->
+    <div class="legend-panel">
+      <div class="legend-title">🎮 Controles Rápidos</div>
+      <div class="legend-item"><span class="key-badge">WASD</span> Mover Guardián</div>
+      <div class="legend-item"><span class="key-badge">ESPACIO</span> 1. Reducir / Reparar</div>
+      <div class="legend-item"><span class="key-badge">R</span> 2. Reusar a Huertos</div>
+      <div class="legend-item"><span class="key-badge">F</span> 3. Reciclar Filtros</div>
+    </div>
+
+    <!-- BARRA INFERIOR DE ACCIONES 3R -->
+    <div class="action-panel">
+      <button id="btnReduce" class="action-btn reduce">
+        <div class="btn-icon">🔧</div>
+        <div class="btn-content">
+          <span class="btn-title">1. REDUCIR FUGAS</span>
+          <span class="btn-sub">Reparar rotura más cercana <span class="key-badge small">ESPACIO</span></span>
+        </div>
+      </button>
+
+      <button id="btnReuse" class="action-btn reuse">
+        <div class="btn-icon">🌱</div>
+        <div class="btn-content">
+          <span class="btn-title">2. REUSAR AGUAS</span>
+          <span class="btn-sub">Canalizar a huerto agrícola <span class="key-badge small">R</span></span>
+        </div>
+      </button>
+
+      <button id="btnRecycle" class="action-btn recycle">
+        <div class="btn-icon">⚗️</div>
+        <div class="btn-content">
+          <span class="btn-title">3. RECICLAR FILTROS</span>
+          <span class="btn-sub">Cargar carbón activo & UV <span class="key-badge small">F</span></span>
+        </div>
+      </button>
+    </div>
+  </main>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -14,6 +14,12 @@ from pathlib import Path
 # Añadir stubs de proto al path
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "client-python" / "proto"))
+sys.path.insert(0, str(ROOT_DIR / "client-python"))
+
+try:
+    from discovery import discover_servers
+except ImportError:
+    discover_servers = None
 
 import grpc
 from ecostream.v1 import common_pb2
@@ -24,13 +30,18 @@ from ecostream.v1 import matchmaking_pb2_grpc
 from ecostream.v1 import gameplay_pb2
 from ecostream.v1 import gameplay_pb2_grpc
 
+def make_grpc_channel(target: str) -> grpc.Channel:
+    if ":443" in target:
+        return grpc.secure_channel(target, grpc.ssl_channel_credentials())
+    return grpc.insecure_channel(target)
+
 def run_interactive_client(gateway_host="localhost:50051", engine_host=None, username="EcoBot_01", room_code=""):
     print("=" * 65)
     print(f"[BOT ECOSTREAM-3R] Iniciando cliente bot para usuario: {username}")
     print(f"[CONTROL PLANE] Conectando a Gateway en {gateway_host} via gRPC...")
     print("=" * 65)
     
-    gateway_channel = grpc.insecure_channel(gateway_host)
+    gateway_channel = make_grpc_channel(gateway_host)
     
     # 1. AUTENTICACIÓN (Sin contraseña - Nickname puro)
     auth_stub = auth_pb2_grpc.AuthServiceStub(gateway_channel)
@@ -81,7 +92,7 @@ def run_interactive_client(gateway_host="localhost:50051", engine_host=None, use
 
     # 3. STREAMING DE JUEGO A 20 HZ CON ACCIONES 3R EN MOTOR RUST
     print(f"\n[DATA PLANE] Conectando a Motor de Simulación en {target_engine}...")
-    engine_channel = grpc.insecure_channel(target_engine)
+    engine_channel = make_grpc_channel(target_engine)
     gameplay_stub = gameplay_pb2_grpc.GameSimulationServiceStub(engine_channel)
 
     print("\n[Paso 3] Iniciando Game Loop autoritativo a 20 Ticks/segundo...")
@@ -140,15 +151,39 @@ def run_interactive_client(gateway_host="localhost:50051", engine_host=None, use
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bot de Prueba gRPC para EcoStream-3R")
-    parser.add_argument("--gateway", default="localhost:50051", help="Host gRPC del Gateway (Control Plane)")
-    parser.add_argument("--engine", default="", help="Host gRPC del Motor (Data Plane)")
+    parser.add_argument("--env", choices=["auto", "local", "cloud"], default="auto",
+                        help="Entorno: 'auto' (mDNS/local con fallback a Render), 'local' o 'cloud'")
+    parser.add_argument("--gateway", default="", help="Host gRPC del Gateway (omite para detección automática)")
+    parser.add_argument("--engine", default="", help="Host gRPC del Motor (omite para detección automática)")
     parser.add_argument("--username", default="EcoBot_01", help="Nombre de usuario / Nickname")
     parser.add_argument("--room", default="", help="Código de sala a unirse (si está vacío, crea una)")
     args = parser.parse_args()
 
+    gw_host = args.gateway
+    eng_host = args.engine
+
+    if not gw_host:
+        if args.env == "local":
+            gw_host = "localhost:50051"
+            if not eng_host:
+                eng_host = "localhost:50052"
+        elif args.env == "cloud":
+            gw_host = "ecostream-gateway.onrender.com:443"
+            if not eng_host:
+                eng_host = "ecostream-engine.onrender.com:443"
+        elif discover_servers:
+            _, eng, _ = discover_servers(prefer_local=True)
+            gw_host = "localhost:50051"
+            if not eng_host:
+                eng_host = eng if eng else "localhost:50052"
+        else:
+            gw_host = "localhost:50051"
+            if not eng_host:
+                eng_host = "localhost:50052"
+
     run_interactive_client(
-        gateway_host=args.gateway,
-        engine_host=args.engine if args.engine else None,
+        gateway_host=gw_host,
+        engine_host=eng_host,
         username=args.username,
         room_code=args.room
     )

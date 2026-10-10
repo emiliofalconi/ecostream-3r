@@ -111,10 +111,14 @@ class EcoStreamGameClient:
         self.reconnect_ticket = ""
         self.is_connected = False
 
-        # Entidades locales
+        # Entidades locales (por defecto para modo offline o previo a sincronización gRPC)
         self.player_x = 380.0
         self.player_y = 320.0
-        self.pipes = []
+        self.pipes = [
+            gameplay_pb2.PipeEntityState(pipe_id=1, is_leaking=False, repair_progress=100.0),
+            gameplay_pb2.PipeEntityState(pipe_id=2, is_leaking=True, repair_progress=0.0),
+            gameplay_pb2.PipeEntityState(pipe_id=3, is_leaking=False, repair_progress=100.0),
+        ]
         self.valves = []
         self.plants = []
 
@@ -297,6 +301,11 @@ class EcoStreamGameClient:
                                         repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=p.pipe_id, repair_progress_delta=50.0)
                                     ))
                                     self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada!)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
+                                    if not self.is_connected:
+                                        p.is_leaking = False
+                                        p.repair_progress = 100.0
+                                        self.team_score += 150
+                                        self.liters_saved += 80.0
                                     break
                     elif not self.is_bot and event.key == pygame.K_r:
                         # 2. Reusar
@@ -305,6 +314,9 @@ class EcoStreamGameClient:
                             divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
                         ))
                         self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto 🌱)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
+                        if not self.is_connected:
+                            self.team_score += 80
+                            self.liters_reused += 45.0
                     elif not self.is_bot and event.key == pygame.K_f:
                         # 3. Reciclar
                         self.queue_action(gameplay_pb2.PlayerAction(
@@ -312,6 +324,10 @@ class EcoStreamGameClient:
                             operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
                         ))
                         self.floating_texts.append(FloatingText("+120 PTS (Filtro Carbón UV ⚗️)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
+                        if not self.is_connected:
+                            self.team_score += 120
+                            self.liters_recycled += 60.0
+                            self.purity_pct = min(100.0, self.purity_pct + 2.0)
 
             # Movimiento Jugador / Bot
             if not self.is_bot:
@@ -327,6 +343,10 @@ class EcoStreamGameClient:
                         action_id=int(time.time()*1000),
                         move=gameplay_pb2.MoveAction(direction_x=dx/length, direction_y=dy/length)
                     ))
+                    if not self.is_connected:
+                        speed = 220.0 * dt
+                        self.player_x = max(35, min(WINDOW_WIDTH - 35, self.player_x + (dx / length) * speed))
+                        self.player_y = max(110, min(WINDOW_HEIGHT - 35, self.player_y + (dy / length) * speed))
             else:
                 self.bot_ai_tick()
 

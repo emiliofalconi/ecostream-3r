@@ -95,7 +95,7 @@ class EcoBot:
 
         try:
             req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-            with urllib.request.urlopen(req, timeout=10.0) as resp:
+            with urllib.request.urlopen(req, timeout=25.0) as resp:
                 data = json.loads(resp.read().decode())
                 self.jwt_token = data.get("token") or data.get("access_token")
                 user = data.get("user", {})
@@ -124,7 +124,7 @@ class EcoBot:
                     "role": self.role
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                with urllib.request.urlopen(req, timeout=25.0) as resp:
                     data = json.loads(resp.read().decode())
                     room = data.get("room", {})
                     self.room_id = room.get("id") or room.get("room_id")
@@ -142,7 +142,7 @@ class EcoBot:
                     "difficulty": 1
                 }).encode("utf-8")
                 req = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=10.0) as resp:
+                with urllib.request.urlopen(req, timeout=25.0) as resp:
                     data = json.loads(resp.read().decode())
                     room = data.get("room", {})
                     self.room_id = room.get("id") or room.get("room_id")
