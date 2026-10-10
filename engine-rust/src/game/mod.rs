@@ -45,4 +45,26 @@ impl RoomManager {
         let rooms = self.rooms.read().await;
         rooms.get(room_id).cloned()
     }
+
+    /// Vaciado de emergencia ante apagado ordenado del servidor (SIGINT/SIGTERM)
+    pub async fn flush_all_active_rooms(&self, reason: &str) {
+        let rooms = self.rooms.read().await;
+        for (room_id, handle) in rooms.iter() {
+            let mut w = handle.world.write().await;
+            if !w.is_finished {
+                w.is_finished = true;
+                w.finish_reason = reason.to_string();
+                let match_end = snapshot::world_to_proto_match_end(&w);
+                tracing::info!(
+                    "[ROOM {}] Apagado ordenado detectado. Vaciando métricas acumuladas a Gateway ({reason})...",
+                    room_id
+                );
+                crate::client::gateway::notify_gateway_match_end(
+                    &self.gateway_url,
+                    room_id,
+                    match_end,
+                ).await;
+            }
+        }
+    }
 }

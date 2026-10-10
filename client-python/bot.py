@@ -30,6 +30,12 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parent
 PROTO_DIR = ROOT_DIR / "proto"
 sys.path.insert(0, str(PROTO_DIR))
+sys.path.insert(0, str(ROOT_DIR))
+
+try:
+    from discovery import discover_servers
+except ImportError:
+    discover_servers = None
 
 try:
     import grpc
@@ -344,8 +350,10 @@ class EcoBot:
 
 def main():
     parser = argparse.ArgumentParser(description="Bot Autónomo para EcoStream-3R")
-    parser.add_argument("--gateway", default="http://localhost:8080", help="URL del Gateway REST (ej: http://localhost:8080 o https://ecostream-gateway.onrender.com)")
-    parser.add_argument("--engine", default="", help="Endpoint gRPC del motor Rust (ej: localhost:50052 o ecostream-engine.onrender.com:443)")
+    parser.add_argument("--env", choices=["auto", "local", "cloud"], default="auto",
+                        help="Entorno de ejecución: 'auto' (mDNS local con fallback a Render), 'local', o 'cloud'")
+    parser.add_argument("--gateway", default="", help="URL del Gateway REST (omite para detección automática)")
+    parser.add_argument("--engine", default="", help="Endpoint gRPC del motor Rust (omite para detección automática)")
     parser.add_argument("--username", default="EcoBot_01", help="Nombre de usuario / Nickname para el bot")
     parser.add_argument("--room", default="", help="Código de sala a unirse (si está vacío, crea una sala automáticamente)")
     parser.add_argument("--role", type=int, default=4, help="Rol del jugador: 1=Plumber, 2=Hydraulic, 3=Chemical, 4=Generalist")
@@ -353,9 +361,35 @@ def main():
 
     args = parser.parse_args()
 
+    gateway_url = args.gateway
+    engine_endpoint = args.engine
+
+    if not gateway_url:
+        if args.env == "local":
+            gateway_url = "http://localhost:8080"
+            if not engine_endpoint:
+                engine_endpoint = "localhost:50052"
+            print(f"[CONFIG] Entorno forzado a LOCAL: {gateway_url}")
+        elif args.env == "cloud":
+            gateway_url = "https://ecostream-gateway.onrender.com"
+            if not engine_endpoint:
+                engine_endpoint = "ecostream-engine.onrender.com:443"
+            print(f"[CONFIG] Entorno forzado a CLOUD (Render): {gateway_url}")
+        elif discover_servers:
+            print("[DISCOVERY] Buscando servidor local vía mDNS (_ecostream._tcp.local.) o HTTP...")
+            gw, eng, mode = discover_servers(prefer_local=True)
+            gateway_url = gw
+            if not engine_endpoint:
+                engine_endpoint = eng
+            print(f"[DISCOVERY] Servidor resuelto [{mode}]: Gateway={gateway_url}, Engine={engine_endpoint}")
+        else:
+            gateway_url = "https://ecostream-gateway.onrender.com"
+            if not engine_endpoint:
+                engine_endpoint = "ecostream-engine.onrender.com:443"
+
     bot = EcoBot(
-        gateway_url=args.gateway,
-        engine_endpoint=args.engine,
+        gateway_url=gateway_url,
+        engine_endpoint=engine_endpoint,
         username=args.username,
         room_code=args.room,
         role=args.role,

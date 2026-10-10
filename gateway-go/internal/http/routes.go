@@ -17,12 +17,13 @@ import (
 
 // Router agrupa las dependencias necesarias para las rutas HTTP
 type Router struct {
-	authService *auth.Service
+	authService  *auth.Service
 	matchService *matchmaking.Service
-	db          *storage.PostgresDB
-	redis       *storage.RedisClient
-	pool        *workerpool.WorkerPool
-	mux         *http.ServeMux
+	db           *storage.PostgresDB
+	redis        *storage.RedisClient
+	pool         *workerpool.WorkerPool
+	syncKey      string
+	mux          *http.ServeMux
 }
 
 // NewRouter crea e inicializa el router HTTP
@@ -32,6 +33,7 @@ func NewRouter(
 	db *storage.PostgresDB,
 	redis *storage.RedisClient,
 	pool *workerpool.WorkerPool,
+	syncKey string,
 ) *Router {
 	r := &Router{
 		authService:  authService,
@@ -39,6 +41,7 @@ func NewRouter(
 		db:           db,
 		redis:        redis,
 		pool:         pool,
+		syncKey:      syncKey,
 		mux:          http.NewServeMux(),
 	}
 	r.registerRoutes()
@@ -119,6 +122,11 @@ func (r *Router) registerRoutes() {
 			"uptime":      time.Now().Format(time.RFC3339),
 		})
 	})
+
+	// -------------------------------------------------------------
+	// Sincronización Edge-to-Cloud (Partidas Terminadas)
+	// -------------------------------------------------------------
+	r.mux.HandleFunc("/api/v1/sync/match-result", r.handleSyncMatchResult)
 
 	// -------------------------------------------------------------
 	// Autenticación HTTP

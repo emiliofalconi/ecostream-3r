@@ -20,6 +20,12 @@ from pathlib import Path
 # Configurar path de stubs proto
 ROOT_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT_DIR / "client-python" / "proto"))
+sys.path.insert(0, str(ROOT_DIR / "client-python"))
+
+try:
+    from discovery import discover_servers
+except ImportError:
+    discover_servers = None
 
 import grpc
 import pygame
@@ -445,23 +451,50 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="EcoStream 3R - Cliente de Juego y Bot")
     parser.add_argument("--bot", action="store_true", help="Activa el modo bot automático para pruebas de carga")
-    parser.add_argument("--gateway", default="http://localhost:8080", help="URL del Gateway (Control Plane)")
-    parser.add_argument("--host", default="localhost:50052", help="Host gRPC del motor Rust (Data Plane)")
+    parser.add_argument("--env", choices=["auto", "local", "cloud"], default="auto",
+                        help="Entorno: 'auto' (mDNS/probe local con fallback a Render), 'local', o 'cloud'")
+    parser.add_argument("--gateway", default="", help="URL del Gateway (omite para detección automática)")
+    parser.add_argument("--host", default="", help="Host gRPC del motor Rust (omite para detección automática)")
     parser.add_argument("--room", default="AGUA42", help="Código o ID de la sala")
     parser.add_argument("--username", default="EcoPlayer", help="Nombre de usuario / Nickname (sin contraseña)")
     parser.add_argument("--ticket", default="", help="RoomTicket firmado con HMAC (opcional; se obtiene automáticamente de Gateway)")
     args = parser.parse_args()
 
+    gateway_url = args.gateway
+    host = args.host
+
+    if not gateway_url:
+        if args.env == "local":
+            gateway_url = "http://localhost:8080"
+            if not host:
+                host = "localhost:50052"
+            print(f"[CONFIG] Entorno forzado a LOCAL: {gateway_url}")
+        elif args.env == "cloud":
+            gateway_url = "https://ecostream-gateway.onrender.com"
+            if not host:
+                host = "ecostream-engine.onrender.com:443"
+            print(f"[CONFIG] Entorno forzado a CLOUD: {gateway_url}")
+        elif discover_servers:
+            print("[DISCOVERY] Buscando servidor local vía mDNS o HTTP...")
+            gw, eng, mode = discover_servers(prefer_local=True)
+            gateway_url = gw
+            if not host:
+                host = eng
+            print(f"[DISCOVERY] Servidor resuelto [{mode}]: Gateway={gateway_url}, Host={host}")
+        else:
+            gateway_url = "https://ecostream-gateway.onrender.com"
+            if not host:
+                host = "ecostream-engine.onrender.com:443"
+
     user_id = f"usr_{args.username}"
     room_ticket = args.ticket
-    host = args.host
     room_id = args.room
 
     # Auto-autenticación y obtención de RoomTicket vía Gateway si no se pasó ticket manual
-    if not room_ticket and args.gateway:
+    if not room_ticket and gateway_url:
         try:
-            print(f"[GATEWAY] Autenticando jugador '{args.username}' en {args.gateway}...")
-            login_url = f"{args.gateway.rstrip('/')}/api/v1/auth/login"
+            print(f"[GATEWAY] Autenticando jugador '{args.username}' en {gateway_url}...")
+            login_url = f"{gateway_url.rstrip('/')}/api/v1/auth/login"
             payload = json.dumps({"username": args.username}).encode("utf-8")
             req = urllib.request.Request(login_url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
             with urllib.request.urlopen(req, timeout=5.0) as resp:
@@ -472,7 +505,7 @@ if __name__ == "__main__":
                 print(f"[GATEWAY] Login exitoso! Token JWT obtenido.")
 
             # Unirse o crear sala
-            join_url = f"{args.gateway.rstrip('/')}/api/v1/rooms/join"
+            join_url = f"{gateway_url.rstrip('/')}/api/v1/rooms/join"
             payload = json.dumps({"room_code": args.room, "selected_role": 4}).encode("utf-8")
             req = urllib.request.Request(join_url, data=payload, headers={"Content-Type": "application/json", "Authorization": f"Bearer {jwt_token}"}, method="POST")
             with urllib.request.urlopen(req, timeout=5.0) as resp:

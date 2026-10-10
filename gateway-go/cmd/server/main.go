@@ -23,6 +23,7 @@ import (
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/matchmaking"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/mdns"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/storage"
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/syncclient"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workerpool"
 	ecostreamv1 "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1"
 )
@@ -68,9 +69,10 @@ func main() {
 	matchService := matchmaking.NewService(matchRepo, redisClient, ticketManager, pool, cfg.SimulationPublicEndpoint)
 
 	// 7. Handlers gRPC
+	syncClient := syncclient.NewClient(cfg.CloudGatewayURL, cfg.SyncServiceKey, cfg.CloudSyncEnabled)
 	authGRPCHandler := auth.NewGRPCHandler(authService)
 	matchGRPCHandler := matchmaking.NewGRPCHandler(matchService, jwtManager)
-	coordGRPCHandler := coordinator.NewHandler(db, redisClient, pool)
+	coordGRPCHandler := coordinator.NewHandler(db, redisClient, pool, syncClient)
 
 	// 8. Configurar Servidor gRPC
 	grpcServer := grpc.NewServer()
@@ -101,7 +103,7 @@ func main() {
 	}()
 
 	// 9. Configurar Servidor HTTP / REST
-	router := internalhttp.NewRouter(authService, matchService, db, redisClient, pool)
+	router := internalhttp.NewRouter(authService, matchService, db, redisClient, pool, cfg.SyncServiceKey)
 	httpServer := internalhttp.NewServer(cfg.HTTPPort, router)
 
 	go func() {

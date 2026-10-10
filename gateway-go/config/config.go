@@ -25,6 +25,9 @@ type Config struct {
 	WorkerCount              int
 	EnableMDNS               bool   // Habilitar anuncio de servicio vía mDNS en LAN
 	MDNSInstanceName         string // Nombre de la instancia en mDNS
+	CloudSyncEnabled         bool   // Habilitar sincronización de partidas hacia la nube al terminar
+	CloudGatewayURL          string // URL del Gateway en Render para enviar partidas
+	SyncServiceKey           string // Clave criptográfica para autenticar sincronización entre servidores
 }
 
 // LoadConfig carga las variables de entorno o asigna valores por defecto seguros para desarrollo y LAN
@@ -44,6 +47,10 @@ func LoadConfig() *Config {
 		simPublicEndpoint = fmt.Sprintf("%s:%d", localIP, simPort)
 	}
 
+	cloudSyncEnabled := getEnvAsBool("CLOUD_SYNC_ENABLED", false)
+	cloudGatewayURL := getEnv("CLOUD_GATEWAY_URL", "https://ecostream-gateway.onrender.com")
+	syncKey := getEnv("SYNC_SERVICE_KEY", getEnv("HMAC_SECRET", "super_secret_eco_hmac_ticket_key_2026"))
+
 	return &Config{
 		HTTPPort:                 httpPort,
 		GRPCPort:                 getEnv("GATEWAY_GRPC_PORT", "50051"),
@@ -59,6 +66,9 @@ func LoadConfig() *Config {
 		WorkerCount:              getEnvAsInt("WORKER_COUNT", 4),
 		EnableMDNS:               getEnvAsBool("ENABLE_MDNS", true),
 		MDNSInstanceName:         getEnv("MDNS_INSTANCE_NAME", ""),
+		CloudSyncEnabled:         cloudSyncEnabled,
+		CloudGatewayURL:          cloudGatewayURL,
+		SyncServiceKey:           syncKey,
 	}
 }
 

@@ -44,6 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         chat_manager,
     );
 
+    let room_manager_shutdown = room_manager.clone();
     let coord_service = CoordinatorService::new(
         room_manager,
         format!("localhost:{}", cfg.simulation_port),
@@ -55,11 +56,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .accept_http1(true)
         .add_service(GameSimulationServiceServer::new(sim_service))
         .add_service(InternalCoordinatorServiceServer::new(coord_service))
-        .serve_with_shutdown(addr, async {
+        .serve_with_shutdown(addr, async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("Fallo al capturar señal CTRL+C");
-            info!("[SERVER] Señal de terminación recibida. Apagando servidor gRPC...");
+            info!("[SERVER] Señal de terminación recibida. Vaciando partidas activas antes de apagar...");
+            room_manager_shutdown.flush_all_active_rooms("SERVER_SHUTDOWN").await;
+            info!("[SERVER] Vaciado completado. Apagando servidor gRPC...");
         })
         .await?;
 

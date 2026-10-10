@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/storage"
+	"github.com/Makmadon/ecostream-3r/gateway-go/internal/syncclient"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workerpool"
 	ecostreamv1 "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1"
 )
@@ -19,14 +20,16 @@ type Handler struct {
 	db         *storage.PostgresDB
 	redis      *storage.RedisClient
 	workerPool *workerpool.WorkerPool
+	syncClient *syncclient.Client
 }
 
 // NewHandler inicializa el coordinador interno
-func NewHandler(db *storage.PostgresDB, redis *storage.RedisClient, pool *workerpool.WorkerPool) *Handler {
+func NewHandler(db *storage.PostgresDB, redis *storage.RedisClient, pool *workerpool.WorkerPool, syncClient *syncclient.Client) *Handler {
 	return &Handler{
 		db:         db,
 		redis:      redis,
 		workerPool: pool,
+		syncClient: syncClient,
 	}
 }
 
@@ -154,6 +157,37 @@ func (h *Handler) NotifyMatchFinished(ctx context.Context, req *ecostreamv1.Noti
 	}
 
 	log.Printf("[INFO] [Coordinator] Partida %s para sala %s persistida exitosamente. Victoria: %v", matchID, req.RoomId, finalState.IsVictory)
+
+	// 4. Sincronizar asíncronamente con la base de datos en la Nube (si está habilitado)
+	if h.syncClient != nil {
+		var playerScores []syncclient.PlayerScoreSync
+		for _, p := range finalState.PlayerScores {
+			playerScores = append(playerScores, syncclient.PlayerScoreSync{
+				PlayerID:            p.PlayerId,
+				Username:            p.Username,
+				Role:                int32(p.Role),
+				IndividualPoints:    p.IndividualPoints,
+				RepairsDone:         p.RepairsDone,
+				WaterSavedLiters:    p.WaterSavedLiters,
+				WaterRecycledLiters: p.WaterRecycledLiters,
+			})
+		}
+
+		h.syncClient.PushMatchAsync(syncclient.MatchSyncPayload{
+			MatchID:             matchID,
+			RoomID:              req.RoomId,
+			IsVictory:           finalState.IsVictory,
+			Reason:              finalState.Reason,
+			FinalScore:          finalState.FinalScore,
+			ReservoirLevelPct:   metrics.ReservoirLevelPct,
+			WaterPurityPct:      metrics.WaterPurityPct,
+			TotalLitersSaved:    metrics.TotalLitersSaved,
+			TotalLitersReused:   metrics.TotalLitersReused,
+			TotalLitersRecycled: metrics.TotalLitersRecycled,
+			PlayerScores:        playerScores,
+			FinishedAt:          time.Now(),
+		})
+	}
 
 	return &ecostreamv1.NotifyMatchFinishedResponse{
 		Acknowledged: true,
