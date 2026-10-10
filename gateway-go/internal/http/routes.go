@@ -131,7 +131,6 @@ func (r *Router) registerRoutes() {
 		var body struct {
 			Username string `json:"username"`
 			Email    string `json:"email"`
-			Password string `json:"password"`
 			Role     int    `json:"role"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
@@ -139,7 +138,7 @@ func (r *Router) registerRoutes() {
 			return
 		}
 
-		user, token, expiresAt, err := r.authService.Register(req.Context(), body.Username, body.Email, body.Password, ecostreamv1.PlayerRole(body.Role))
+		user, token, expiresAt, err := r.authService.Register(req.Context(), body.Username, body.Email, ecostreamv1.PlayerRole(body.Role))
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
@@ -161,7 +160,6 @@ func (r *Router) registerRoutes() {
 		var body struct {
 			Username        string `json:"username"`
 			UsernameOrEmail string `json:"username_or_email"`
-			Password        string `json:"password"`
 		}
 		if err := json.NewDecoder(req.Body).Decode(&body); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "JSON inválido"})
@@ -173,7 +171,7 @@ func (r *Router) registerRoutes() {
 			identifier = strings.TrimSpace(body.UsernameOrEmail)
 		}
 
-		user, token, expiresAt, err := r.authService.Login(req.Context(), identifier, body.Password)
+		user, token, expiresAt, err := r.authService.Login(req.Context(), identifier)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": err.Error()})
 			return

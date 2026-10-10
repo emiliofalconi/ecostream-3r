@@ -20,7 +20,6 @@ CREATE TABLE users (
     id VARCHAR(64) PRIMARY KEY DEFAULT ('usr_' || substr(md5(random()::text || clock_timestamp()::text), 1, 16)),
     username VARCHAR(50) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
     default_role INT NOT NULL DEFAULT 4, -- 1: PLUMBER, 2: HYDRAULIC, 3: CHEMICAL, 4: GENERALIST
     games_played INT NOT NULL DEFAULT 0,
     games_won INT NOT NULL DEFAULT 0,
@@ -124,13 +123,12 @@ CREATE INDEX idx_audit_logs_created_at ON audit_logs(created_at DESC);
 
 -- ------------------------------------------------------------------------------
 -- 8. DATOS DE SEMILLA (SEEDS) PARA DESARROLLO Y TESTING INMEDIATO
--- Contraseña para usuarios de prueba: EcoStream2026!
 -- ------------------------------------------------------------------------------
-INSERT INTO users (id, username, email, password_hash, default_role, games_played, games_won, total_eco_score)
+INSERT INTO users (id, username, email, default_role, games_played, games_won, total_eco_score)
 VALUES 
-    ('usr_victor_admin', 'VictorAdmin', 'victor@ecostream.ucab.ve', '$2b$10$vbMpDUhsSD8AJjD4Ci8xs.GVuut3Mtka8khNCLGvRRKmuHDKiNjg6', 2, 10, 8, 4500.0),
-    ('usr_plumber_hero', 'PlumberHero', 'plumber@ecostream.ucab.ve', '$2b$10$vbMpDUhsSD8AJjD4Ci8xs.GVuut3Mtka8khNCLGvRRKmuHDKiNjg6', 1, 5, 4, 2100.0),
-    ('usr_eco_bot_01', 'EcoBot01', 'bot01@ecostream.local', '$2b$10$vbMpDUhsSD8AJjD4Ci8xs.GVuut3Mtka8khNCLGvRRKmuHDKiNjg6', 4, 20, 15, 8900.0)
+    ('usr_victor_admin', 'VictorAdmin', 'victor@ecostream.ucab.ve', 2, 10, 8, 4500.0),
+    ('usr_plumber_hero', 'PlumberHero', 'plumber@ecostream.ucab.ve', 1, 5, 4, 2100.0),
+    ('usr_eco_bot_01', 'EcoBot01', 'bot01@ecostream.local', 4, 20, 15, 8900.0)
 ON CONFLICT (username) DO NOTHING;
 
 INSERT INTO rooms (id, room_code, room_name, host_user_id, status, current_players, max_players, difficulty_level, simulation_endpoint)

@@ -28,8 +28,7 @@ message UserProfile {
 message RegisterRequest {
   string username = 1;
   string email = 2;
-  string password = 3;
-  PlayerRole default_role = 4;
+  PlayerRole default_role = 3;
 }
 
 message RegisterResponse {
@@ -41,8 +40,7 @@ message RegisterResponse {
 }
 
 message LoginRequest {
-  string username_or_email = 1;
-  string password = 2;
+  string username = 1;
 }
 
 message LoginResponse {

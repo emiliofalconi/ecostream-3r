@@ -9,14 +9,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/storage"
 	"github.com/Makmadon/ecostream-3r/gateway-go/internal/workerpool"
 	ecostreamv1 "github.com/Makmadon/ecostream-3r/gateway-go/proto/v1"
 )
 
-// Service implementa la lógica de negocio de autenticación
+// Service implementa la lógica de negocio de autenticación y gestión de jugadores
 type Service struct {
 	db         *storage.PostgresDB
 	jwtManager *JWTManager
@@ -32,24 +31,18 @@ func NewService(db *storage.PostgresDB, jwtManager *JWTManager, workerPool *work
 	}
 }
 
-// Register registra un nuevo usuario en PostgreSQL de forma segura con bcrypt
-func (s *Service) Register(ctx context.Context, username, email, password string, role ecostreamv1.PlayerRole) (*ecostreamv1.UserProfile, string, int64, error) {
+// Register registra un nuevo usuario en PostgreSQL por nombre de usuario
+func (s *Service) Register(ctx context.Context, username, email string, role ecostreamv1.PlayerRole) (*ecostreamv1.UserProfile, string, int64, error) {
 	username = strings.TrimSpace(username)
 	email = strings.TrimSpace(strings.ToLower(email))
 
-	if len(username) < 3 || len(username) > 30 {
-		return nil, "", 0, errors.New("el nombre de usuario debe tener entre 3 y 30 caracteres")
+	if len(username) < 2 || len(username) > 30 {
+		return nil, "", 0, errors.New("el nombre de usuario debe tener entre 2 y 30 caracteres")
 	}
-	if len(password) < 6 {
-		return nil, "", 0, errors.New("la contraseña debe tener al menos 6 caracteres")
-	}
-	if !strings.Contains(email, "@") {
+	if email == "" {
+		email = fmt.Sprintf("%s@ecostream.local", strings.ToLower(username))
+	} else if !strings.Contains(email, "@") {
 		return nil, "", 0, errors.New("formato de correo electrónico inválido")
-	}
-
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, "", 0, fmt.Errorf("error al cifrar contraseña: %w", err)
 	}
 
 	userID := "usr_" + strings.ReplaceAll(uuid.New().String(), "-", "")[:16]
@@ -59,8 +52,8 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	}
 
 	query := `
-		INSERT INTO users (id, username, email, password_hash, default_role, games_played, games_won, total_eco_score, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 0, 0, 0.0, NOW(), NOW())
+		INSERT INTO users (id, username, email, default_role, games_played, games_won, total_eco_score, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 0, 0, 0.0, NOW(), NOW())
 		RETURNING id, username, email, default_role, games_played, games_won, total_eco_score, created_at
 	`
 
@@ -68,7 +61,7 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	var createdAt time.Time
 	var userRole int32
 
-	err = s.db.DB.QueryRowContext(ctx, query, userID, username, email, string(hashedPassword), roleInt).Scan(
+	err := s.db.DB.QueryRowContext(ctx, query, userID, username, email, roleInt).Scan(
 		&user.UserId,
 		&user.Username,
 		&user.Email,
@@ -107,29 +100,27 @@ func (s *Service) Register(ctx context.Context, username, email, password string
 	return &user, token, expiresAt, nil
 }
 
-// Login autentica a un usuario y genera su token JWT (soporta inicio rápido solo con Nickname)
-func (s *Service) Login(ctx context.Context, usernameOrEmail, password string) (*ecostreamv1.UserProfile, string, int64, error) {
-	usernameOrEmail = strings.TrimSpace(usernameOrEmail)
-	if usernameOrEmail == "" {
+// Login autentica a un usuario directamente por su nombre de usuario (sin contraseñas)
+func (s *Service) Login(ctx context.Context, username string) (*ecostreamv1.UserProfile, string, int64, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
 		return nil, "", 0, errors.New("nombre de usuario requerido")
 	}
 
 	query := `
-		SELECT id, username, email, password_hash, default_role, games_played, games_won, total_eco_score, created_at
+		SELECT id, username, email, default_role, games_played, games_won, total_eco_score, created_at
 		FROM users
 		WHERE username = $1 OR email = LOWER($1)
 	`
 
 	var user ecostreamv1.UserProfile
-	var passwordHash string
 	var createdAt time.Time
 	var userRole int32
 
-	err := s.db.DB.QueryRowContext(ctx, query, usernameOrEmail).Scan(
+	err := s.db.DB.QueryRowContext(ctx, query, username).Scan(
 		&user.UserId,
 		&user.Username,
 		&user.Email,
-		&passwordHash,
 		&userRole,
 		&user.GamesPlayed,
 		&user.GamesWon,
@@ -139,16 +130,9 @@ func (s *Service) Login(ctx context.Context, usernameOrEmail, password string) (
 
 	// Si el usuario no existe, auto-registrarlo de inmediato como jugador sin fricción
 	if errors.Is(err, sql.ErrNoRows) {
-		return s.autoRegisterGuest(ctx, usernameOrEmail)
+		return s.autoRegisterGuest(ctx, username)
 	} else if err != nil {
 		return nil, "", 0, fmt.Errorf("error al consultar usuario: %w", err)
-	}
-
-	// Si se proporcionó una contraseña y la cuenta tiene contraseña configurada, verificarla con bcrypt
-	if password != "" && passwordHash != "" {
-		if err := bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(password)); err != nil {
-			return nil, "", 0, errors.New("credenciales inválidas")
-		}
 	}
 
 	user.DefaultRole = ecostreamv1.PlayerRole(userRole)
@@ -189,8 +173,8 @@ func (s *Service) autoRegisterGuest(ctx context.Context, username string) (*ecos
 	roleInt := int32(ecostreamv1.PlayerRole_ROLE_GENERALIST)
 
 	insertQuery := `
-		INSERT INTO users (id, username, email, password_hash, default_role, games_played, games_won, total_eco_score, created_at, updated_at)
-		VALUES ($1, $2, $3, '', $4, 0, 0, 0.0, NOW(), NOW())
+		INSERT INTO users (id, username, email, default_role, games_played, games_won, total_eco_score, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, 0, 0, 0.0, NOW(), NOW())
 		RETURNING id, username, email, default_role, games_played, games_won, total_eco_score, created_at
 	`
 

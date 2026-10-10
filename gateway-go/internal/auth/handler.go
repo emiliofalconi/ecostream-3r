@@ -22,11 +22,11 @@ func NewGRPCHandler(service *Service) *GRPCHandler {
 
 // Register atiende solicitudes de registro gRPC
 func (h *GRPCHandler) Register(ctx context.Context, req *ecostreamv1.RegisterRequest) (*ecostreamv1.RegisterResponse, error) {
-	if req.Username == "" || req.Email == "" || req.Password == "" {
-		return nil, status.Error(codes.InvalidArgument, "todos los campos son requeridos")
+	if req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "nombre de usuario requerido")
 	}
 
-	user, token, expiresAt, err := h.service.Register(ctx, req.Username, req.Email, req.Password, req.DefaultRole)
+	user, token, expiresAt, err := h.service.Register(ctx, req.Username, req.Email, req.DefaultRole)
 	if err != nil {
 		return &ecostreamv1.RegisterResponse{
 			Success: false,
@@ -45,11 +45,11 @@ func (h *GRPCHandler) Register(ctx context.Context, req *ecostreamv1.RegisterReq
 
 // Login atiende solicitudes de inicio de sesión gRPC
 func (h *GRPCHandler) Login(ctx context.Context, req *ecostreamv1.LoginRequest) (*ecostreamv1.LoginResponse, error) {
-	if req.UsernameOrEmail == "" || req.Password == "" {
-		return nil, status.Error(codes.InvalidArgument, "usuario y contraseña requeridos")
+	if req.Username == "" {
+		return nil, status.Error(codes.InvalidArgument, "nombre de usuario requerido")
 	}
 
-	user, token, expiresAt, err := h.service.Login(ctx, req.UsernameOrEmail, req.Password)
+	user, token, expiresAt, err := h.service.Login(ctx, req.Username)
 	if err != nil {
 		return &ecostreamv1.LoginResponse{
 			Success: false,

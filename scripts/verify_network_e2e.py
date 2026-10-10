@@ -135,11 +135,11 @@ class NetworkVerifier:
 
         return True
 
-    def step_2_auth_login(self, username: str = "Jugador_Eco", password: str = "") -> bool:
-        """Autentica un usuario (soporta inicio rápido solo con Nickname) y extrae el token JWT"""
+    def step_2_auth_login(self, username: str = "Jugador_Eco") -> bool:
+        """Autentica un usuario por Nickname y extrae el token JWT"""
         print_header("Paso 2: Autenticación por Nickname y Emisión de Token JWT")
         url = f"{self.gateway_url}/api/v1/auth/login"
-        payload = json.dumps({"username": username, "password": password}).encode("utf-8")
+        payload = json.dumps({"username": username}).encode("utf-8")
         headers = {"Content-Type": "application/json"}
 
         t0 = time.time()
@@ -277,7 +277,7 @@ class NetworkVerifier:
             print_fail(f"No fue posible completar la comunicación con el motor en {host}:{port}: {e}")
             return False
 
-    def run_all(self, auto_discover: bool = False, username: str = "admin_eco", password: str = "EcoStream2026!") -> bool:
+    def run_all(self, auto_discover: bool = False, username: str = "Jugador_Eco") -> bool:
         """Ejecuta la secuencia completa de validación"""
         print(f"\n{BOLD}{GREEN}==================================================================={RESET}")
         print(f"{BOLD}{GREEN} EcoStream-3R: Verificación End-to-End de Conectividad y Despliegue {RESET}")
@@ -289,7 +289,7 @@ class NetworkVerifier:
         if not self.step_1_health_and_readiness():
             return False
 
-        if not self.step_2_auth_login(username, password):
+        if not self.step_2_auth_login(username):
             return False
 
         if not self.step_3_room_creation():
@@ -314,8 +314,7 @@ def main():
     parser.add_argument("--engine", type=str, default="", help="Endpoint del motor de simulación (opcional; se autodetecta de la sala)")
     parser.add_argument("--host", type=str, default="", help="IP o hostname de host local (atajo para --gateway http://<host>:8080)")
     parser.add_argument("--tls", action="store_true", help="Usar TLS / HTTPS (obligatorio para despliegue en Render)")
-    parser.add_argument("--username", type=str, default="admin_eco", help="Usuario para prueba de login")
-    parser.add_argument("--password", type=str, default="EcoStream2026!", help="Contraseña para prueba de login")
+    parser.add_argument("--username", type=str, default="Jugador_Eco", help="Nickname / Usuario para prueba de login")
     parser.add_argument("--timeout", type=float, default=5.0, help="Timeout de red en segundos")
 
     args = parser.parse_args()
@@ -339,8 +338,7 @@ def main():
 
     success = verifier.run_all(
         auto_discover=args.auto_discover,
-        username=args.username,
-        password=args.password
+        username=args.username
     )
 
     sys.exit(0 if success else 1)

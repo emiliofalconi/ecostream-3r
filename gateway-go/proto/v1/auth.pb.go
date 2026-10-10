@@ -125,8 +125,7 @@ type RegisterRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
 	Email         string                 `protobuf:"bytes,2,opt,name=email,proto3" json:"email,omitempty"`
-	Password      string                 `protobuf:"bytes,3,opt,name=password,proto3" json:"password,omitempty"`
-	DefaultRole   PlayerRole             `protobuf:"varint,4,opt,name=default_role,json=defaultRole,proto3,enum=ecostream.v1.PlayerRole" json:"default_role,omitempty"`
+	DefaultRole   PlayerRole             `protobuf:"varint,3,opt,name=default_role,json=defaultRole,proto3,enum=ecostream.v1.PlayerRole" json:"default_role,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -171,13 +170,6 @@ func (x *RegisterRequest) GetUsername() string {
 func (x *RegisterRequest) GetEmail() string {
 	if x != nil {
 		return x.Email
-	}
-	return ""
-}
-
-func (x *RegisterRequest) GetPassword() string {
-	if x != nil {
-		return x.Password
 	}
 	return ""
 }
@@ -266,11 +258,10 @@ func (x *RegisterResponse) GetExpiresAtUnix() int64 {
 }
 
 type LoginRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	UsernameOrEmail string                 `protobuf:"bytes,1,opt,name=username_or_email,json=usernameOrEmail,proto3" json:"username_or_email,omitempty"`
-	Password        string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Username      string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LoginRequest) Reset() {
@@ -303,16 +294,9 @@ func (*LoginRequest) Descriptor() ([]byte, []int) {
 	return file_ecostream_v1_auth_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *LoginRequest) GetUsernameOrEmail() string {
+func (x *LoginRequest) GetUsername() string {
 	if x != nil {
-		return x.UsernameOrEmail
-	}
-	return ""
-}
-
-func (x *LoginRequest) GetPassword() string {
-	if x != nil {
-		return x.Password
+		return x.Username
 	}
 	return ""
 }
@@ -631,21 +615,19 @@ const file_ecostream_v1_auth_proto_rawDesc = "" +
 	"\tgames_won\x18\x06 \x01(\rR\bgamesWon\x12&\n" +
 	"\x0ftotal_eco_score\x18\a \x01(\x02R\rtotalEcoScore\x12\x1d\n" +
 	"\n" +
-	"created_at\x18\b \x01(\tR\tcreatedAt\"\x9c\x01\n" +
+	"created_at\x18\b \x01(\tR\tcreatedAt\"\x80\x01\n" +
 	"\x0fRegisterRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x14\n" +
-	"\x05email\x18\x02 \x01(\tR\x05email\x12\x1a\n" +
-	"\bpassword\x18\x03 \x01(\tR\bpassword\x12;\n" +
-	"\fdefault_role\x18\x04 \x01(\x0e2\x18.ecostream.v1.PlayerRoleR\vdefaultRole\"\xb3\x01\n" +
+	"\x05email\x18\x02 \x01(\tR\x05email\x12;\n" +
+	"\fdefault_role\x18\x03 \x01(\x0e2\x18.ecostream.v1.PlayerRoleR\vdefaultRole\"\xb3\x01\n" +
 	"\x10RegisterResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x14\n" +
 	"\x05token\x18\x03 \x01(\tR\x05token\x12-\n" +
 	"\x04user\x18\x04 \x01(\v2\x19.ecostream.v1.UserProfileR\x04user\x12&\n" +
-	"\x0fexpires_at_unix\x18\x05 \x01(\x03R\rexpiresAtUnix\"V\n" +
-	"\fLoginRequest\x12*\n" +
-	"\x11username_or_email\x18\x01 \x01(\tR\x0fusernameOrEmail\x12\x1a\n" +
-	"\bpassword\x18\x02 \x01(\tR\bpassword\"\xb0\x01\n" +
+	"\x0fexpires_at_unix\x18\x05 \x01(\x03R\rexpiresAtUnix\"*\n" +
+	"\fLoginRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\"\xb0\x01\n" +
 	"\rLoginResponse\x12\x18\n" +
 	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x14\n" +
