@@ -73,7 +73,7 @@ Para consultar la planificación técnica exhaustiva, visita el directorio `docs
 
 ## 🚀 Hoja de Ruta de Desarrollo
 
-> Esta rama (`Side-dev`) contiene **solo documentación**. La implementación vive en la rama `fase1`; los puntos donde aún no cumple el diseño están en [docs/ALCANCE_Y_DECISIONES.md](docs/ALCANCE_Y_DECISIONES.md#4-desviaciones-conocidas-respecto-a-la-rama-fase1).
+> Esta rama (`Side-dev`) contiene **exclusivamente el Backend Cloud-Native (Gateway Go, Motor Rust 20 Hz, PostgreSQL, Redis, Docker y Despliegue Render)**. La capa de presentación y clientes gráficos front viven en la rama `fase1`.
 
 - [x] **Fase 0: Planificación y Arquitectura de Nube**
   - [x] Definición conceptual de las 3R para preservación de agua.

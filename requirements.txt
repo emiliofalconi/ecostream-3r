@@ -1,7 +1,0 @@
-# Dependencias de Python para EcoStream 3R
-# Usar pygame-ce (Community Edition) para máxima compatibilidad con Python 3.10, 3.11, 3.12, 3.13 y 3.14+
-grpcio>=1.62.0
-grpcio-tools>=1.62.0
-protobuf>=4.25.0
-pygame-ce>=2.5.0
-requests>=2.31.0
