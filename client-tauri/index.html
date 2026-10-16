@@ -69,6 +69,16 @@
       </div>
 
       <div class="hud-controls">
+        <div id="roomBadge" class="room-badge" title="Sala y Conexión Go Gateway">
+          <span class="room-dot" id="roomDot"></span>
+          <span id="txtRoomCode">Sin Sala</span>
+        </div>
+        <button id="btnOpenTutorial" class="lobby-trigger-btn tutorial-pill" title="Ver Misión y Guía 3R">
+          📖 Misión 3R
+        </button>
+        <button id="btnOpenLobby" class="lobby-trigger-btn" title="Gestionar Salas (Go Gateway)">
+          🌐 Salas Go
+        </button>
         <div id="rttWidget" class="rtt-widget" title="Telemetría de Latencia en Vivo">
           <div class="rtt-dot"></div>
           <span id="txtPing">2 ms</span>
@@ -84,13 +94,21 @@
   <main>
     <canvas id="gameCanvas"></canvas>
 
+    <!-- BANNER DE RESILIENCIA Y CORTE DE RED FÍSICO (NO BLOQUEANTE) -->
+    <div id="netStatusBanner" class="net-status-banner hidden">
+      <span class="net-banner-icon">⚠️</span>
+      <span id="netBannerText">Enlace de red interrumpido (Corte físico o caída de nodo detectada). El juego continúa en modo local y se reconectará en background...</span>
+      <span class="net-banner-badge">Modo Resiliente</span>
+    </div>
+
     <!-- NOTIFICACIONES TOAST FLOTANTES -->
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- PANEL INFORMATIVO Y GUÍA DE TECLAS -->
     <div class="legend-panel">
       <div class="legend-title">🎮 Controles Rápidos</div>
-      <div class="legend-item"><span class="key-badge">WASD</span> Mover Guardián</div>
+      <div class="legend-item"><span class="key-badge">WASD</span> Mover Guardián (Fluido)</div>
+      <div class="legend-item"><span class="key-badge">SHIFT</span> ⚡ Impulso / Dash Rápido</div>
       <div class="legend-item"><span class="key-badge">ESPACIO</span> 1. Reducir / Reparar</div>
       <div class="legend-item"><span class="key-badge">R</span> 2. Reusar a Huertos</div>
       <div class="legend-item"><span class="key-badge">F</span> 3. Reciclar Filtros</div>
@@ -123,6 +141,178 @@
       </button>
     </div>
   </main>
+
+  <!-- MODAL DE MATCHMAKING Y CONEXIÓN CON GO GATEWAY -->
+  <div id="lobbyModal" class="lobby-overlay hidden">
+    <div class="lobby-card">
+      <div class="lobby-header">
+        <div class="lobby-title-row">
+          <span class="lobby-icon">🌐</span>
+          <h2>Lobby Multijugador (Go Gateway)</h2>
+        </div>
+        <button id="btnCloseLobby" class="lobby-close-btn">&times;</button>
+      </div>
+
+      <div class="lobby-status-bar">
+        <span class="status-indicator" id="gatewayStatusDot"></span>
+        <span id="gatewayStatusText">Comprobando conexión con Go Gateway (:8080)...</span>
+      </div>
+
+      <div class="lobby-grid">
+        <!-- SECCIÓN 1: PERFIL DEL JUGADOR -->
+        <div class="lobby-section">
+          <h3>👤 Tu Identidad</h3>
+          <div class="form-group">
+            <label for="inputUsername">Nombre de Jugador:</label>
+            <input type="text" id="inputUsername" placeholder="Ej: AquaGuardian1" value="Guardián_1">
+          </div>
+          <div class="form-group">
+            <label for="inputGatewayHost">Servidor Cloud / IP Pública:</label>
+            <input type="text" id="inputGatewayHost" placeholder="localhost:8080 o IP de AWS" value="localhost:8080">
+          </div>
+          <div class="form-group">
+            <label for="selectRole">Rol Especializado 3R:</label>
+            <select id="selectRole">
+              <option value="1">🔧 Fontanero (1. Reducir)</option>
+              <option value="2">🌱 Ing. Hidráulico (2. Reusar)</option>
+              <option value="3">⚗️ Químico Ambiental (3. Reciclar)</option>
+              <option value="4" selected>💧 Guardián General</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- SECCIÓN 2: ACCIONES DE MATCHMAKING -->
+        <div class="lobby-section">
+          <h3>🎮 Acciones de Sala</h3>
+          <div class="lobby-actions-row">
+            <button id="btnCreateRoomGo" class="btn-primary">
+              ➕ Crear Sala Nueva
+            </button>
+          </div>
+          <div class="join-input-group">
+            <input type="text" id="inputRoomCode" placeholder="Código (ej: AGUA-89BC)" style="text-transform: uppercase;">
+            <button id="btnJoinRoomGo" class="btn-secondary">
+              🚪 Unirse
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SECCIÓN 3: LISTA DE SALAS DISPONIBLES EN GO -->
+      <div class="lobby-section" style="margin-top: 16px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3>📋 Salas Abiertas en Go Gateway</h3>
+          <button id="btnRefreshRooms" class="btn-refresh">🔄 Actualizar</button>
+        </div>
+        <div id="roomsListContainer" class="rooms-list">
+          <div class="room-empty">Presiona "Actualizar" o "Crear Sala" para comenzar...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE INTRODUCCIÓN Y MISIÓN 3R (TUTORIAL ONBOARDING) -->
+  <div id="introModal" class="lobby-overlay">
+    <div class="intro-card">
+      <div class="intro-header">
+        <div class="intro-badge">🌱 MISIÓN DE BIENVENIDA</div>
+        <h2 class="intro-title">EcoStream 3R: AquaGuardians</h2>
+        <p class="intro-tagline">Protege los recursos hídricos comunales aplicando la filosofía de las 3R</p>
+      </div>
+
+      <div class="intro-body">
+        <div class="intro-story">
+          <p>
+            Como <strong>AquaGuardian</strong>, tu deber es mantener en marcha la red hidráulica de la comunidad.
+            Las tuberías sufren fugas constantes por presión y las toxinas amenazan la pureza. Si no actúas con prontitud, ¡la comunidad enfrentará una catástrofe hídrica!
+          </p>
+        </div>
+
+        <h3 class="section-title">🕹️ Las 3 Reglas de Acción Hídrica</h3>
+        <div class="pillars-grid">
+          <div class="pillar-box reduce">
+            <div class="pillar-icon">🔧</div>
+            <h4>1. REDUCIR</h4>
+            <div class="pillar-key">ESPACIO</div>
+            <p>Sella fugas y roturas de alta presión en las tuberías para detener el vaciado del embalse.</p>
+          </div>
+
+          <div class="pillar-box reuse">
+            <div class="pillar-icon">🌱</div>
+            <h4>2. REUSAR</h4>
+            <div class="pillar-key">TECLA [R]</div>
+            <p>Canaliza aguas a los huertos comunitarios para nutrir los cultivos y generar alimento.</p>
+          </div>
+
+          <div class="pillar-box recycle">
+            <div class="pillar-icon">⚗️</div>
+            <h4>3. RECICLAR</h4>
+            <div class="pillar-key">TECLA [F]</div>
+            <p>Carga carbón activado y activa reactores UV para purificar y recuperar agua no potable.</p>
+          </div>
+        </div>
+
+        <div class="intro-rules-grid">
+          <div class="rules-card controls">
+            <h4>🎮 Movilidad y Destrezas</h4>
+            <ul>
+              <li><strong>WASD / Flechas:</strong> Movimiento continuo con inercia y aceleración suave.</li>
+              <li><strong>SHIFT:</strong> Turbo Dash sónico para esquivar y disolver manchas de toxinas.</li>
+              <li><strong>Coleccionables:</strong> Recoge maletines 🧰, gotas 💧 y turbos ⚡ en el mapa.</li>
+            </ul>
+          </div>
+          <div class="rules-card danger">
+            <h4>💀 Condiciones de Derrota (¡Cuidado!)</h4>
+            <ul>
+              <li><strong>Sequía Extrema:</strong> Si el <em>Embalse Principal</em> llega a <strong>0%</strong>.</li>
+              <li><strong>Contaminación Tóxica:</strong> Si la <em>Pureza</em> cae por debajo de <strong>40%</strong>.</li>
+              <li><em>¡No descuides ninguna zona o perderás la partida!</em></li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="intro-footer">
+        <button id="btnStartGame" class="btn-start-game">
+          🚀 ¡INICIAR MISIÓN AQUAGUARDIAN! <span class="key-hint">(ESPACIO / ENTER)</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL DE DERROTA (GAME OVER) -->
+  <div id="gameOverModal" class="lobby-overlay hidden">
+    <div class="gameover-card">
+      <div class="gameover-icon">💀</div>
+      <h2 id="gameOverTitle" class="gameover-title">MISIÓN FALLIDA</h2>
+      <p id="gameOverReason" class="gameover-reason">El embalse comunal se ha quedado sin una sola gota de agua.</p>
+
+      <div class="gameover-stats">
+        <div class="stat-pill">
+          <span class="stat-lbl">Puntaje Final</span>
+          <span id="goStatScore" class="stat-val">0 pts</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-lbl">Agua Salvada</span>
+          <span id="goStatSaved" class="stat-val">0 L</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-lbl">Agua Reusada</span>
+          <span id="goStatReused" class="stat-val">0 L</span>
+        </div>
+        <div class="stat-pill">
+          <span class="stat-lbl">Agua Reciclada</span>
+          <span id="goStatRecycled" class="stat-val">0 L</span>
+        </div>
+      </div>
+
+      <div class="gameover-actions">
+        <button id="btnRestartMission" class="btn-restart-game">
+          🔄 Reintentar Misión <span class="key-hint">(ESPACIO o R)</span>
+        </button>
+      </div>
+    </div>
+  </div>
 
   <script type="module" src="/src/main.ts"></script>
 </body>
