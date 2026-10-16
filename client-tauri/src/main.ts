@@ -93,6 +93,126 @@ interface Afterimage {
 const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
 const ctx = canvas.getContext('2d')!;
 
+// ============================================================================
+// SPRITESHEET PIXEL ART (1024x571) - Texturas optimizadas 3R
+// ============================================================================
+const spriteSheetImg = new Image();
+spriteSheetImg.src = '/spritesheet_transparent.png';
+let spriteSheetLoaded = false;
+spriteSheetImg.onload = () => {
+  spriteSheetLoaded = true;
+};
+spriteSheetImg.onerror = () => {
+  const fallback = new Image();
+  fallback.src = './spritesheet_transparent.png';
+  fallback.onload = () => {
+    spriteSheetLoaded = true;
+    spriteSheetImg.src = fallback.src;
+  };
+};
+
+export interface SpriteRect {
+  sx: number;
+  sy: number;
+  sw: number;
+  sh: number;
+}
+
+const SPRITES = {
+  dam: { sx: 14, sy: 16, sw: 391, sh: 193 },
+  plant: { sx: 726, sy: 12, sw: 280, sh: 187 },
+  pipeStraight: { sx: 0, sy: 298, sw: 105, sh: 26 },
+  pipeLeaking: { sx: 0, sy: 334, sw: 205, sh: 45 },
+  valveRed: { sx: 770, sy: 300, sw: 38, sh: 35 },
+  treeOak: { sx: 705, sy: 195, sw: 95, sh: 90 },
+  treePine: { sx: 800, sy: 195, sw: 55, sh: 90 },
+  bush: { sx: 860, sy: 210, sw: 60, sh: 45 },
+  flowers: { sx: 930, sy: 225, sw: 45, sh: 30 },
+  workerIdle: { sx: 10, sy: 420, sw: 32, sh: 50 },
+  workerWalk: [
+    { sx: 160, sy: 420, sw: 32, sh: 50 },
+    { sx: 205, sy: 420, sw: 32, sh: 50 },
+    { sx: 250, sy: 420, sw: 32, sh: 50 },
+  ],
+  workerWrench: [
+    { sx: 465, sy: 420, sw: 45, sh: 50 },
+    { sx: 515, sy: 420, sw: 45, sh: 50 },
+  ],
+  workerShovel: [
+    { sx: 565, sy: 420, sw: 45, sh: 50 },
+    { sx: 610, sy: 420, sw: 45, sh: 50 },
+  ],
+  workerWelder: { sx: 770, sy: 420, sw: 45, sh: 50 },
+  iconWrench: { sx: 304, sy: 486, sw: 45, sh: 45 },
+  iconShovel: { sx: 354, sy: 486, sw: 45, sh: 45 },
+  iconTorch: { sx: 404, sy: 486, sw: 45, sh: 45 },
+  iconValve: { sx: 454, sy: 486, sw: 45, sh: 45 },
+  iconDroplet: { sx: 504, sy: 486, sw: 45, sh: 45 },
+  iconRecycle: { sx: 554, sy: 486, sw: 45, sh: 45 },
+  meterBar: { sx: 8, sy: 486, sw: 286, sh: 38 },
+};
+
+function drawSprite(
+  sprite: SpriteRect,
+  dx: number,
+  dy: number,
+  dw?: number,
+  dh?: number,
+  flipX: boolean = false
+): boolean {
+  if (!spriteSheetLoaded) return false;
+  const targetW = dw ?? sprite.sw;
+  const targetH = dh ?? sprite.sh;
+  ctx.save();
+  if (flipX) {
+    ctx.translate(dx + targetW, dy);
+    ctx.scale(-1, 1);
+    ctx.drawImage(spriteSheetImg, sprite.sx, sprite.sy, sprite.sw, sprite.sh, 0, 0, targetW, targetH);
+  } else {
+    ctx.drawImage(spriteSheetImg, sprite.sx, sprite.sy, sprite.sw, sprite.sh, dx, dy, targetW, targetH);
+  }
+  ctx.restore();
+  return true;
+}
+
+// Sprites individuales transparentes sin halo ni artefactos de recorte
+const cleanSpriteImages: Record<string, HTMLImageElement> = {};
+const cleanSpriteNames = [
+  'dam', 'plant', 'pipe_straight', 'pipe_leaking', 'valve_red',
+  'tree_oak', 'tree_pine', 'bush', 'flowers',
+  'worker_idle', 'worker_walk0', 'worker_walk1', 'worker_walk2',
+  'worker_wrench0', 'worker_wrench1', 'worker_shovel0', 'worker_shovel1', 'worker_welder',
+  'icon_wrench', 'icon_shovel', 'icon_torch', 'icon_valve', 'icon_droplet', 'icon_recycle'
+];
+
+cleanSpriteNames.forEach((name) => {
+  const img = new Image();
+  img.src = `/sprites/${name}.png`;
+  cleanSpriteImages[name] = img;
+});
+
+function drawCleanSprite(
+  name: string,
+  dx: number,
+  dy: number,
+  dw: number,
+  dh: number,
+  flipX: boolean = false
+): boolean {
+  const img = cleanSpriteImages[name];
+  if (!img || !img.complete || img.naturalWidth === 0) return false;
+  ctx.save();
+  if (flipX) {
+    ctx.translate(dx + dw, dy);
+    ctx.scale(-1, 1);
+    ctx.drawImage(img, 0, 0, dw, dh);
+  } else {
+    ctx.drawImage(img, dx, dy, dw, dh);
+  }
+  ctx.restore();
+  return true;
+}
+
 // Partículas y Efectos Visuales
 const particles: Particle[] = [];
 const floatingTexts: FloatingText[] = [];
@@ -167,6 +287,9 @@ for (let r = 0; r < 3; r++) {
   }
 }
 
+let isGameStarted = false;
+let naturalLeakTimer = 12.0;
+
 // Redimensionar Canvas
 function resizeCanvas() {
   canvas.width = window.innerWidth;
@@ -183,6 +306,24 @@ const activeKeys = new Set<string>();
 window.addEventListener('keydown', (e) => {
   activeKeys.add(e.code);
   activeKeys.add(e.key.toLowerCase());
+
+  // Si el modal de intro está activo, iniciar partida con Espacio o Enter
+  if (!isGameStarted) {
+    if (e.code === 'Space' || e.code === 'Enter') {
+      e.preventDefault();
+      startGame();
+      return;
+    }
+  }
+
+  // Si el modal de Game Over está activo, reiniciar con Espacio, Enter o R
+  if (state.isGameOver) {
+    if (e.code === 'Space' || e.code === 'Enter' || e.key.toLowerCase() === 'r') {
+      e.preventDefault();
+      restartGame();
+      return;
+    }
+  }
 
   // Tecla SHIFT: Activar Dash / Impulso Rápido
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight' || e.key.toLowerCase() === 'shift') {
@@ -266,6 +407,85 @@ function triggerDash() {
 
   showToast('⚡ ¡IMPULSO DASH ACTIVADO!', 'reuse');
 }
+
+// Control de Modales (Intro Onboarding y Game Over)
+function startGame() {
+  isGameStarted = true;
+  const introModal = document.getElementById('introModal');
+  if (introModal) introModal.classList.add('hidden');
+  sound.playButtonClick();
+  showToast('¡Misión iniciada! Protege el embalse y la pureza comunal.', 'reduce');
+}
+
+function restartGame() {
+  state.isGameOver = false;
+  state.hasWon = false;
+  state.score = 0;
+  state.metrics.reservoirLevelPct = 100.0;
+  state.metrics.waterPurityPct = 96.0;
+  state.metrics.totalLitersSaved = 0;
+  state.metrics.totalLitersReused = 0;
+  state.metrics.totalLitersRecycled = 0;
+  state.player.x = 420;
+  state.player.y = 320;
+  state.player.vx = 0;
+  state.player.vy = 0;
+  state.player.targetX = null;
+  state.player.targetY = null;
+  state.pipes.forEach((p, idx) => {
+    p.isLeaking = idx === 1;
+    p.repairProgress = idx === 1 ? 0 : 100;
+  });
+  collectibles.length = 0;
+  threats.length = 0;
+  particles.length = 0;
+  floatingTexts.length = 0;
+  naturalLeakTimer = 12.0;
+
+  const goModal = document.getElementById('gameOverModal');
+  if (goModal) goModal.classList.add('hidden');
+
+  updateHUD();
+  sound.playButtonClick();
+  showToast('¡Misión reiniciada! Salvemos el agua comunal.', 'reuse');
+}
+
+function triggerGameOver(reason: 'drought' | 'toxic') {
+  state.isGameOver = true;
+  triggerScreenShake(14);
+  sound.playDefeat();
+
+  const titleEl = document.getElementById('gameOverTitle');
+  const reasonEl = document.getElementById('gameOverReason');
+  const scoreEl = document.getElementById('goStatScore');
+  const savedEl = document.getElementById('goStatSaved');
+  const reusedEl = document.getElementById('goStatReused');
+  const recycledEl = document.getElementById('goStatRecycled');
+
+  if (reason === 'drought') {
+    if (titleEl) titleEl.textContent = '¡SEQUÍA CRÍTICA TOTAL!';
+    if (reasonEl) reasonEl.textContent = 'El embalse principal se ha quedado sin una sola gota de agua (0.0%). La comunidad no tiene suministro.';
+  } else {
+    if (titleEl) titleEl.textContent = '¡CONTAMINACIÓN TÓXICA!';
+    if (reasonEl) reasonEl.textContent = `La pureza del agua comunal cayó por debajo del 40% (${state.metrics.waterPurityPct.toFixed(1)}%). El agua ha dejado de ser apta para el consumo.`;
+  }
+
+  if (scoreEl) scoreEl.textContent = `${state.score} pts`;
+  if (savedEl) savedEl.textContent = `${state.metrics.totalLitersSaved} L`;
+  if (reusedEl) reusedEl.textContent = `${state.metrics.totalLitersReused} L`;
+  if (recycledEl) recycledEl.textContent = `${state.metrics.totalLitersRecycled} L`;
+
+  const goModal = document.getElementById('gameOverModal');
+  if (goModal) goModal.classList.remove('hidden');
+}
+
+document.getElementById('btnStartGame')?.addEventListener('click', startGame);
+document.getElementById('btnRestartMission')?.addEventListener('click', restartGame);
+document.getElementById('btnOpenTutorial')?.addEventListener('click', () => {
+  const introModal = document.getElementById('introModal');
+  if (introModal) introModal.classList.remove('hidden');
+  sound.playButtonClick();
+});
 
 // Botones UI con sonido de click
 document.getElementById('btnReduce')?.addEventListener('click', () => { sound.playButtonClick(); actionReduce(); });
@@ -411,27 +631,9 @@ function actionReduce() {
     showToast(isBurst ? '🚨 ¡Fuga de emergencia contenida! +220 PTS' : '¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
     updateHUD();
   } else {
-    // Si no hay roturas, generar una nueva aleatoria tras un breve delay para juego continuo
-    const okPipes = state.pipes.filter((p) => !p.isLeaking);
-    if (okPipes.length > 0) {
-      const p = okPipes[Math.floor(Math.random() * okPipes.length)];
-      p.isLeaking = true;
-      triggerScreenShake(9);
-      sound.playLeakAlert();
-      sound.playShockwave();
-
-      shockwaves.push({
-        x: p.x + 110,
-        y: p.y + 13,
-        radius: 6,
-        maxRadius: 55,
-        color: '#ef4444',
-        alpha: 1.0,
-        lineWidth: 2.5,
-      });
-
-      showToast(`¡Nueva rotura a presión en Tubería #${p.id}!`, 'reduce');
-    }
+    // Si no hay roturas activas, dar feedback positivo y NUNCA romper tuberías artificialmente
+    sound.playButtonClick();
+    showToast('Tuberías seguras. Presión hidráulica nominal.', 'reduce');
   }
 }
 
@@ -582,12 +784,13 @@ function updateHUD() {
   if (elScr) elScr.textContent = `${state.score} pts`;
   if (elSav) elSav.textContent = `${state.metrics.totalLitersSaved} L`;
 
-  // Detección y feedback auditivo/visual de Sequía Crítica
-  if (resPct <= 0 && !state.isGameOver) {
-    state.isGameOver = true;
-    triggerScreenShake(14);
-    sound.playDefeat();
-    showToast('¡SEQUÍA CRÍTICA! El nivel del embalse se ha agotado por completo 💀', 'reduce');
+  // Detección de Condiciones de Derrota (Sequía Crítica o Contaminación Tóxica)
+  if (!state.isGameOver) {
+    if (resPct <= 0) {
+      triggerGameOver('drought');
+    } else if (purPct <= 40) {
+      triggerGameOver('toxic');
+    }
   }
 
   // Detección de Hito de Victoria (Puntaje Ecológico)
@@ -631,30 +834,47 @@ function gameLoop(now: number) {
     }
   }
 
-  // Actualizar Ciclo de Eventos de Caos Dinámicos
-  if (state.activeChaos) {
-    state.activeChaos.duration -= dt;
-    if (state.activeChaos.type === 'rain') {
-      // Lluvia recarga el embalse continuamente
-      state.metrics.reservoirLevelPct = Math.min(100, state.metrics.reservoirLevelPct + dt * 0.4);
-    } else if (state.activeChaos.type === 'heatwave') {
-      // Calor acelera evaporación
-      state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - dt * 0.04);
+  // Temporizador de roturas naturales periódicas en las tuberías (10 a 16s)
+  if (isGameStarted && !state.isGameOver) {
+    naturalLeakTimer -= dt;
+    if (naturalLeakTimer <= 0) {
+      naturalLeakTimer = 10 + Math.random() * 6;
+      const okPipes = state.pipes.filter((pipe) => !pipe.isLeaking);
+      if (okPipes.length > 0) {
+        const pipe = okPipes[Math.floor(Math.random() * okPipes.length)];
+        pipe.isLeaking = true;
+        triggerScreenShake(6);
+        sound.playLeakAlert();
+        showToast(`¡Aviso: Fuga por presión en Tubería #${pipe.id}!`, 'reduce');
+      }
     }
-    if (state.activeChaos.duration <= 0) {
-      state.activeChaos = null;
-      state.chaosTimer = 22.0 + Math.random() * 10;
-      showToast('🌤️ Evento climático finalizado. Condiciones normales.', 'reuse');
-    }
-  } else {
-    state.chaosTimer -= dt;
-    if (state.chaosTimer <= 0) {
-      const types: ('heatwave' | 'burst' | 'rain')[] = ['heatwave', 'burst', 'rain'];
-      const chosen = types[Math.floor(Math.random() * types.length)];
-      sound.playChaosAlarm();
-      triggerScreenShake(8);
+  }
 
-      if (chosen === 'heatwave') {
+  // Actualizar Ciclo de Eventos de Caos Dinámicos
+  if (isGameStarted && !state.isGameOver) {
+    if (state.activeChaos) {
+      state.activeChaos.duration -= dt;
+      if (state.activeChaos.type === 'rain') {
+        // Lluvia recarga el embalse continuamente
+        state.metrics.reservoirLevelPct = Math.min(100, state.metrics.reservoirLevelPct + dt * 0.4);
+      } else if (state.activeChaos.type === 'heatwave') {
+        // Calor acelera evaporación
+        state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - dt * 0.04);
+      }
+      if (state.activeChaos.duration <= 0) {
+        state.activeChaos = null;
+        state.chaosTimer = 22.0 + Math.random() * 10;
+        showToast('🌤️ Evento climático finalizado. Condiciones normales.', 'reuse');
+      }
+    } else {
+      state.chaosTimer -= dt;
+      if (state.chaosTimer <= 0) {
+        const types: ('heatwave' | 'burst' | 'rain')[] = ['heatwave', 'burst', 'rain'];
+        const chosen = types[Math.floor(Math.random() * types.length)];
+        sound.playChaosAlarm();
+        triggerScreenShake(8);
+
+        if (chosen === 'heatwave') {
         state.activeChaos = {
           type: 'heatwave',
           title: '☀️ ¡OLA DE CALOR! Riega el huerto rápido (PUNTOS x2)',
@@ -683,6 +903,7 @@ function gameLoop(now: number) {
       }
     }
   }
+}
 
   // 1. Polling de entrada continua (WASD y Flechas)
   let inX = 0;
@@ -925,9 +1146,13 @@ function gameLoop(now: number) {
     }
   }
 
-  // Drenaje continuo realista
-  const hasLeak = state.pipes.some((pipe) => pipe.isLeaking);
-  state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - (hasLeak ? 0.02 : 0.004));
+  // Drenaje continuo realista y degradación biológica sólo durante la partida activa
+  if (isGameStarted && !state.isGameOver) {
+    const hasLeak = state.pipes.some((pipe) => pipe.isLeaking);
+    state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - (hasLeak ? 0.022 : 0.005));
+    // Degradación biológica gradual que exige reciclar
+    state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 0.006);
+  }
   if (state.tick % 25 === 0) updateHUD();
 
   // Iniciar Screen Shake (si está activo)
@@ -1024,10 +1249,16 @@ function gameLoop(now: number) {
 
   ctx.restore();
 
-  // Etiqueta del embalse
+  // Presa de concreto Pixel Art coronando el embalse
+  const damDrawn = drawCleanSprite('dam', resX + 10, resY + 44, resW - 20, 105);
+  if (!damDrawn) drawSprite(SPRITES.dam, resX + 10, resY + 44, resW - 20, 105);
+
+  // Etiqueta del embalse con icono pixel art
+  const dropDrawn = drawCleanSprite('icon_droplet', resX + 16, resY + 14, 20, 20);
+  if (!dropDrawn) drawSprite(SPRITES.iconDroplet, resX + 16, resY + 14, 20, 20);
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold 13px Outfit, sans-serif';
-  ctx.fillText(`💧 EMBALSE: ${state.metrics.reservoirLevelPct.toFixed(1)}%`, resX + 22, resY + 34);
+  ctx.fillText(`EMBALSE: ${state.metrics.reservoirLevelPct.toFixed(1)}%`, resX + 42, resY + 29);
 
   // ------------------------------------------------------------------------
   // 3. ZONA B: 1. REDUCIR (Red de Tuberías y Fugas a Presión)
@@ -1045,53 +1276,76 @@ function gameLoop(now: number) {
   ctx.fill();
   ctx.stroke();
 
+  const wrenchDrawn = drawCleanSprite('icon_wrench', zone1X + 14, zone1Y + 14, 20, 20);
+  if (!wrenchDrawn) drawSprite(SPRITES.iconWrench, zone1X + 14, zone1Y + 14, 20, 20);
   ctx.fillStyle = '#f87171';
   ctx.font = 'bold 13px Outfit, sans-serif';
-  ctx.fillText('🔧 1. REDUCIR (Fugas Comunales)', zone1X + 16, zone1Y + 28);
+  ctx.fillText('1. REDUCIR (Fugas Comunales)', zone1X + 40, zone1Y + 28);
 
   state.pipes.forEach((pipe) => {
-    // === TUBERÍA METÁLICA PIXEL ART CON COBRE Y REMACHES ===
     const isLeak = pipe.isLeaking;
-
-    // Sombra de la tubería
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-    ctx.fillRect(pipe.x + 2, pipe.y + 4, pipe.w, pipe.h);
-
-    // Cuerpo principal de la tubería (Cobre / Bronce oscuro rústico)
-    ctx.fillStyle = isLeak ? '#7f1d1d' : '#334155';
-    ctx.fillRect(pipe.x, pipe.y, pipe.w, pipe.h);
-
-    // Brillo superior metálico
-    ctx.fillStyle = isLeak ? '#f87171' : '#64748b';
-    ctx.fillRect(pipe.x, pipe.y, pipe.w, 4);
-
-    // Borde inferior sombreado
-    ctx.fillStyle = isLeak ? '#450a0a' : '#1e293b';
-    ctx.fillRect(pipe.x, pipe.y + pipe.h - 4, pipe.w, 4);
-
-    // Uniones y acoples de cobre con remaches (cada 60px)
-    for (let j = 0; j < pipe.w; j += 55) {
-      ctx.fillStyle = '#b45309'; // Cobre
-      ctx.fillRect(pipe.x + j, pipe.y - 2, 8, pipe.h + 4);
-      // Remaches
-      ctx.fillStyle = '#fde68a';
-      ctx.fillRect(pipe.x + j + 2, pipe.y, 4, 3);
-      ctx.fillRect(pipe.x + j + 2, pipe.y + pipe.h - 3, 4, 3);
-    }
-
-    // Si tiene rotura: dibujar grieta fracturada pixel art en el centro
+    let pipeDrawn = false;
     if (isLeak) {
-      ctx.fillStyle = '#fef08a';
-      ctx.fillRect(pipe.x + 105, pipe.y + 6, 12, 14);
-      ctx.fillStyle = '#38bdf8';
-      ctx.fillRect(pipe.x + 107, pipe.y + 4, 8, 18);
+      pipeDrawn = drawCleanSprite('pipe_leaking', pipe.x - 2, pipe.y - 6, pipe.w + 4, pipe.h + 12);
+      if (!pipeDrawn && spriteSheetLoaded) {
+        pipeDrawn = drawSprite(SPRITES.pipeLeaking, pipe.x - 2, pipe.y - 6, pipe.w + 4, pipe.h + 12);
+      }
+    } else {
+      pipeDrawn = drawCleanSprite('pipe_straight', pipe.x, pipe.y - 2, pipe.w, pipe.h + 4);
+      if (!pipeDrawn && spriteSheetLoaded) {
+        pipeDrawn = drawSprite(SPRITES.pipeStraight, pipe.x, pipe.y - 2, pipe.w, pipe.h + 4);
+      }
+    }
+    const valveDrawn = drawCleanSprite('valve_red', pipe.x + pipe.w - 26, pipe.y - 3, 22, 22);
+    if (!valveDrawn && spriteSheetLoaded) {
+      drawSprite(SPRITES.valveRed, pipe.x + pipe.w - 26, pipe.y - 3, 22, 22);
     }
 
-    // Texto de estado
+    if (!pipeDrawn) {
+      // === TUBERÍA METÁLICA PIXEL ART CON COBRE Y REMACHES (FALLBACK PROCEDURAL) ===
+      // Sombra de la tubería
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+      ctx.fillRect(pipe.x + 2, pipe.y + 4, pipe.w, pipe.h);
+
+      // Cuerpo principal de la tubería (Cobre / Bronce oscuro rústico)
+      ctx.fillStyle = isLeak ? '#7f1d1d' : '#334155';
+      ctx.fillRect(pipe.x, pipe.y, pipe.w, pipe.h);
+
+      // Brillo superior metálico
+      ctx.fillStyle = isLeak ? '#f87171' : '#64748b';
+      ctx.fillRect(pipe.x, pipe.y, pipe.w, 4);
+
+      // Borde inferior sombreado
+      ctx.fillStyle = isLeak ? '#450a0a' : '#1e293b';
+      ctx.fillRect(pipe.x, pipe.y + pipe.h - 4, pipe.w, 4);
+
+      // Uniones y acoples de cobre con remaches (cada 60px)
+      for (let j = 0; j < pipe.w; j += 55) {
+        ctx.fillStyle = '#b45309'; // Cobre
+        ctx.fillRect(pipe.x + j, pipe.y - 2, 8, pipe.h + 4);
+        // Remaches
+        ctx.fillStyle = '#fde68a';
+        ctx.fillRect(pipe.x + j + 2, pipe.y, 4, 3);
+        ctx.fillRect(pipe.x + j + 2, pipe.y + pipe.h - 3, 4, 3);
+      }
+
+      // Si tiene rotura: dibujar grieta fracturada pixel art en el centro
+      if (isLeak) {
+        ctx.fillStyle = '#fef08a';
+        ctx.fillRect(pipe.x + 105, pipe.y + 6, 12, 14);
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(pipe.x + 107, pipe.y + 4, 8, 18);
+      }
+    }
+
+    // Texto de estado con sombra para máxima legibilidad
+    ctx.shadowColor = '#000000';
+    ctx.shadowBlur = 3;
     ctx.fillStyle = '#ffffff';
     ctx.font = '600 11px Outfit, sans-serif';
     const statusText = pipe.isLeaking ? `Tubería #${pipe.id} [⚠️ ROTURA CRÍTICA - ESPACIO]` : `Tubería #${pipe.id} [OK - Presión Estable]`;
     ctx.fillText(statusText, pipe.x + 12, pipe.y + 17);
+    ctx.shadowBlur = 0;
 
     // Si tiene fuga: chorro de agua animado
     if (pipe.isLeaking) {
@@ -1127,13 +1381,29 @@ function gameLoop(now: number) {
   ctx.fill();
   ctx.stroke();
 
+  const shovelDrawn = drawCleanSprite('icon_shovel', zone2X + 14, zone2Y + 14, 20, 20);
+  if (!shovelDrawn) drawSprite(SPRITES.iconShovel, zone2X + 14, zone2Y + 14, 20, 20);
   ctx.fillStyle = '#86efac';
   ctx.font = 'bold 13px Outfit, sans-serif';
-  ctx.fillText('🌱 2. REUSAR (Huertos Comunitarios)', zone2X + 16, zone2Y + 26);
+  ctx.fillText('2. REUSAR (Huertos Comunitarios)', zone2X + 40, zone2Y + 28);
 
   ctx.fillStyle = '#dcfce7';
   ctx.font = '11px Outfit, sans-serif';
   ctx.fillText(`Litros reusados: ${state.metrics.totalLitersReused} L`, zone2X + 16, zone2Y + 44);
+
+  // Árboles y vegetación pixel art en el huerto comunitario
+  if (!drawCleanSprite('tree_oak', zone2X + zone2W - 68, zone2Y + 8, 54, 52)) {
+    drawSprite(SPRITES.treeOak, zone2X + zone2W - 68, zone2Y + 8, 54, 52);
+  }
+  if (!drawCleanSprite('tree_pine', zone2X + zone2W - 105, zone2Y + 10, 34, 50)) {
+    drawSprite(SPRITES.treePine, zone2X + zone2W - 105, zone2Y + 10, 34, 50);
+  }
+  if (!drawCleanSprite('bush', zone2X + zone2W - 145, zone2Y + 28, 36, 26)) {
+    drawSprite(SPRITES.bush, zone2X + zone2W - 145, zone2Y + 28, 36, 26);
+  }
+  if (!drawCleanSprite('flowers', zone2X + zone2W - 180, zone2Y + 36, 30, 20)) {
+    drawSprite(SPRITES.flowers, zone2X + zone2W - 180, zone2Y + 36, 30, 20);
+  }
 
   // Dibujar cultivos con suelo de labranza Pixel Art
   state.crops.forEach((crop) => {
@@ -1146,14 +1416,25 @@ function gameLoop(now: number) {
     ctx.fillRect(crop.x - 4, crop.y + 10, 40, 4);
     ctx.fillRect(crop.x - 4, crop.y + 22, 40, 4);
 
-    // Hortaliza / Planta Pixel Art
-    const plantColor = crop.growth > 0.7 ? '#4ade80' : '#16a34a';
-    ctx.fillStyle = plantColor;
-    const sz = Math.floor(6 + crop.growth * 10);
-    ctx.fillRect(crop.x + 16 - sz / 2, crop.y + 14 - sz / 2, sz, sz);
-    // Destello de rocío
-    ctx.fillStyle = '#bbf7d0';
-    ctx.fillRect(crop.x + 14, crop.y + 12, 3, 3);
+    let cropDrawn = false;
+    if (crop.growth > 0.65) {
+      cropDrawn = drawCleanSprite('bush', crop.x + 2, crop.y - 2, 28, 24);
+      if (!cropDrawn && spriteSheetLoaded) cropDrawn = drawSprite(SPRITES.bush, crop.x + 2, crop.y - 2, 28, 24);
+    } else if (crop.growth > 0.3) {
+      cropDrawn = drawCleanSprite('flowers', crop.x + 4, crop.y + 2, 24, 18);
+      if (!cropDrawn && spriteSheetLoaded) cropDrawn = drawSprite(SPRITES.flowers, crop.x + 4, crop.y + 2, 24, 18);
+    }
+
+    if (!cropDrawn) {
+      // Hortaliza / Planta Pixel Art procedural fallback
+      const plantColor = crop.growth > 0.7 ? '#4ade80' : '#16a34a';
+      ctx.fillStyle = plantColor;
+      const sz = Math.floor(6 + crop.growth * 10);
+      ctx.fillRect(crop.x + 16 - sz / 2, crop.y + 14 - sz / 2, sz, sz);
+      // Destello de rocío
+      ctx.fillStyle = '#bbf7d0';
+      ctx.fillRect(crop.x + 14, crop.y + 12, 3, 3);
+    }
 
     // Aspersor activo
     if (state.sprinklersActive && Math.random() < 0.3) {
@@ -1187,18 +1468,28 @@ function gameLoop(now: number) {
   ctx.fill();
   ctx.stroke();
 
+  const recDrawn = drawCleanSprite('icon_recycle', zone3X + 14, zone3Y + 14, 20, 20);
+  if (!recDrawn) drawSprite(SPRITES.iconRecycle, zone3X + 14, zone3Y + 14, 20, 20);
   ctx.fillStyle = '#d8b4fe';
   ctx.font = 'bold 13px Outfit, sans-serif';
-  ctx.fillText('⚗️ 3. RECICLAR (Planta de Filtrado Biológico)', zone3X + 16, zone3Y + 28);
+  ctx.fillText('3. RECICLAR (Planta de Filtrado Biológico)', zone3X + 40, zone3Y + 28);
 
   ctx.fillStyle = '#f3e8ff';
   ctx.font = '11px Outfit, sans-serif';
   ctx.fillText(`Pureza: ${state.metrics.waterPurityPct.toFixed(1)}% | Filtrado: ${state.metrics.totalLitersRecycled} L`, zone3X + 16, zone3Y + 48);
 
-  // Tanque cilíndrico de bio-filtración animado
+  // Complejo industrial de biofiltrado y silos pixel art
+  const plantW = Math.min(zone3W - 30, 260);
+  const plantH = 140;
+  const plantX = zone3X + (zone3W - plantW) / 2;
+  const plantY = zone3Y + 62;
+  const plantDrawn = drawCleanSprite('plant', plantX, plantY, plantW, plantH);
+  if (!plantDrawn) drawSprite(SPRITES.plant, plantX, plantY, plantW, plantH);
+
+  // Tanque cilíndrico de bio-filtración animado (posicionado debajo)
   const tankX = zone3X + zone3W / 2;
-  const tankY = zone3Y + 160;
-  const tankR = 65;
+  const tankY = zone3Y + 265;
+  const tankR = 60;
 
   ctx.save();
   ctx.translate(tankX, tankY);
@@ -1374,71 +1665,113 @@ function gameLoop(now: number) {
   ctx.arc(0, 4, state.player.isDashing ? 26 : 22, 0, Math.PI * 2);
   ctx.stroke();
 
-  // === RENDERIZADO PIXEL ART RETRO DEL PERSONAJE ===
-  // 1. Botas de trabajo (Cuero marrón oscuro)
-  ctx.fillStyle = '#451a03';
-  ctx.fillRect(-8, 14, 6, 6);
-  ctx.fillRect(2, 14, 6, 6);
-  ctx.fillStyle = '#291002';
-  ctx.fillRect(-8, 18, 6, 2);
-  ctx.fillRect(2, 18, 6, 2);
-
-  // 2. Piernas y Overol de mezclilla (Denim Blue #1e3a8a / #2563eb)
-  ctx.fillStyle = '#1e3a8a';
-  ctx.fillRect(-7, 6, 5, 9);
-  ctx.fillRect(2, 6, 5, 9);
-  // Cuerpo del overol
-  ctx.fillStyle = '#2563eb';
-  ctx.fillRect(-8, -2, 16, 9);
-  // Tirantes del overol
-  ctx.fillStyle = '#1d4ed8';
-  ctx.fillRect(-7, -6, 3, 5);
-  ctx.fillRect(4, -6, 3, 5);
-  // Hebillas de latón
-  ctx.fillStyle = '#fbbf24';
-  ctx.fillRect(-7, -2, 3, 2);
-  ctx.fillRect(4, -2, 3, 2);
-
-  // 3. Camisa interior (Cian ecológico #0284c7)
-  ctx.fillStyle = '#0284c7';
-  ctx.fillRect(-4, -6, 8, 4);
-
-  // 4. Cabeza y rostro (Piel cálida #fed7aa)
-  ctx.fillStyle = '#fed7aa';
-  ctx.fillRect(-6, -15, 12, 10);
-  // Ojos pixel art
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(-4, -12, 2, 3);
-  ctx.fillRect(2, -12, 2, 3);
-
-  // 5. Sombrero de paja rústico de técnico (Paja #fde047 / #ca8a04)
-  ctx.fillStyle = '#ca8a04';
-  ctx.fillRect(-12, -18, 24, 4); // Ala ancha
-  ctx.fillStyle = '#eab308';
-  ctx.fillRect(-8, -24, 16, 7); // Copa
-  // Cinta azul del sombrero
-  ctx.fillStyle = '#0284c7';
-  ctx.fillRect(-8, -19, 16, 2);
-
-  // 6. Brazo y Herramienta activa (Llave inglesa o soldador)
-  ctx.save();
-  ctx.rotate(state.player.angle);
-  ctx.translate(10, 0);
-
-  if (state.player.isWrenching) {
-    // Animación de impacto de soldadura / llave
-    ctx.rotate(Math.sin(state.tick * 0.8) * 0.5);
+  // Determinar dirección de mirada
+  const isMoving = Math.hypot(state.player.vx, state.player.vy) > 10;
+  let flipX = false;
+  if (state.player.vx < -5) {
+    flipX = true;
+  } else if (state.player.vx > 5) {
+    flipX = false;
+  } else if (Math.cos(state.player.angle) < -0.2) {
+    flipX = true;
   }
 
-  // Llave inglesa metálica Pixel Art
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(0, -2, 12, 4); // Mango
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(10, -5, 6, 10); // Cabeza
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(12, -2, 4, 4); // Muesca central
+  // Determinar animación del personaje AquaGuardian según la acción
+  const dGardenCheck = Math.hypot(state.player.x - 410, state.player.y - 440);
+  let currentSprite = SPRITES.workerIdle;
+  let cleanName = 'worker_idle';
+  if (state.player.isWrenching) {
+    const frame = Math.floor(state.tick / 6) % SPRITES.workerWrench.length;
+    currentSprite = SPRITES.workerWrench[frame];
+    cleanName = `worker_wrench${frame}`;
+  } else if (dGardenCheck < 150 && (state.sprinklersActive || isMoving)) {
+    const frame = Math.floor(state.tick / 8) % SPRITES.workerShovel.length;
+    currentSprite = SPRITES.workerShovel[frame];
+    cleanName = `worker_shovel${frame}`;
+  } else if (state.player.isDashing || state.player.speedBuffTimer > 0) {
+    currentSprite = SPRITES.workerWelder;
+    cleanName = 'worker_welder';
+  } else if (isMoving) {
+    const frame = Math.floor(state.player.walkCycle * 2) % SPRITES.workerWalk.length;
+    currentSprite = SPRITES.workerWalk[frame];
+    cleanName = `worker_walk${frame}`;
+  }
 
-  ctx.restore();
+  // Intentar renderizar sprite limpio sin bordes o fallback a spritesheet
+  const sprW = Math.round(currentSprite.sw * 0.95);
+  const sprH = Math.round(currentSprite.sh * 0.95);
+  let playerDrawn = drawCleanSprite(cleanName, -sprW / 2, -sprH + 16, sprW, sprH, flipX);
+  if (!playerDrawn) {
+    playerDrawn = drawSprite(currentSprite, -sprW / 2, -sprH + 16, sprW, sprH, flipX);
+  }
+
+  if (!playerDrawn) {
+    // === RENDERIZADO PIXEL ART PROCEDURAL (FALLBACK) ===
+    // 1. Botas de trabajo (Cuero marrón oscuro)
+    ctx.fillStyle = '#451a03';
+    ctx.fillRect(-8, 14, 6, 6);
+    ctx.fillRect(2, 14, 6, 6);
+    ctx.fillStyle = '#291002';
+    ctx.fillRect(-8, 18, 6, 2);
+    ctx.fillRect(2, 18, 6, 2);
+
+    // 2. Piernas y Overol de mezclilla (Denim Blue #1e3a8a / #2563eb)
+    ctx.fillStyle = '#1e3a8a';
+    ctx.fillRect(-7, 6, 5, 9);
+    ctx.fillRect(2, 6, 5, 9);
+    // Cuerpo del overol
+    ctx.fillStyle = '#2563eb';
+    ctx.fillRect(-8, -2, 16, 9);
+    // Tirantes del overol
+    ctx.fillStyle = '#1d4ed8';
+    ctx.fillRect(-7, -6, 3, 5);
+    ctx.fillRect(4, -6, 3, 5);
+    // Hebillas de latón
+    ctx.fillStyle = '#fbbf24';
+    ctx.fillRect(-7, -2, 3, 2);
+    ctx.fillRect(4, -2, 3, 2);
+
+    // 3. Camisa interior (Cian ecológico #0284c7)
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(-4, -6, 8, 4);
+
+    // 4. Cabeza y rostro (Piel cálida #fed7aa)
+    ctx.fillStyle = '#fed7aa';
+    ctx.fillRect(-6, -15, 12, 10);
+    // Ojos pixel art
+    ctx.fillStyle = '#1e293b';
+    ctx.fillRect(-4, -12, 2, 3);
+    ctx.fillRect(2, -12, 2, 3);
+
+    // 5. Sombrero de paja rústico de técnico (Paja #fde047 / #ca8a04)
+    ctx.fillStyle = '#ca8a04';
+    ctx.fillRect(-12, -18, 24, 4); // Ala ancha
+    ctx.fillStyle = '#eab308';
+    ctx.fillRect(-8, -24, 16, 7); // Copa
+    // Cinta azul del sombrero
+    ctx.fillStyle = '#0284c7';
+    ctx.fillRect(-8, -19, 16, 2);
+
+    // 6. Brazo y Herramienta activa (Llave inglesa o soldador)
+    ctx.save();
+    ctx.rotate(state.player.angle);
+    ctx.translate(10, 0);
+
+    if (state.player.isWrenching) {
+      // Animación de impacto de soldadura / llave
+      ctx.rotate(Math.sin(state.tick * 0.8) * 0.5);
+    }
+
+    // Llave inglesa metálica Pixel Art
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillRect(0, -2, 12, 4); // Mango
+    ctx.fillStyle = '#e2e8f0';
+    ctx.fillRect(10, -5, 6, 10); // Cabeza
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(12, -2, 4, 4); // Muesca central
+
+    ctx.restore();
+  }
 
   // Barra visual de Cooldown de Dash (si está en recarga)
   if (state.player.dashCooldown > 0) {
