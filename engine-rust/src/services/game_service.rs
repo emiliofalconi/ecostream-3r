@@ -235,8 +235,8 @@ impl GameSimulationService for GameServiceImpl {
 
         if let Some(handle) = rooms.get(&req.room_id) {
             let mut r = handle.sim.lock().await;
-            if let Some(valid_ticket) = r.session_tickets.get(&req.player_id) {
-                if valid_ticket == &req.reconnect_ticket {
+            if let Some(valid_ticket) = r.session_tickets.get(&req.player_id).cloned() {
+                if valid_ticket == req.reconnect_ticket {
                     if let Some(player) = r.players.get_mut(&req.player_id) {
                         player.is_connected = true;
                     }
@@ -244,7 +244,7 @@ impl GameSimulationService for GameServiceImpl {
                     let snapshot = GameWorldSnapshot {
                         baseline_tick: r.tick,
                         room_id: req.room_id,
-                        reconnect_ticket: valid_ticket.clone(),
+                        reconnect_ticket: valid_ticket,
                         current_state: Some(current_state),
                         match_duration_seconds: r.remaining_seconds as i64,
                     };

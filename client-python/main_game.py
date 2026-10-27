@@ -103,13 +103,13 @@ class FloatingText:
         self.x = x
         self.y = y
         self.color = color
-        self.alpha = 255
-        self.life = 1.0
+        self.alpha = 230
+        self.life = 0.75
 
     def update(self):
-        self.y -= 1.2
-        self.life -= 0.02
-        self.alpha = max(0, int(255 * self.life))
+        self.y -= 0.9
+        self.life -= 0.03
+        self.alpha = max(0, int(230 * self.life))
         return self.life > 0
 
 class EcoStreamGameClient:
@@ -318,12 +318,19 @@ class EcoStreamGameClient:
         with self.lock:
             self.action_queue.append(action)
 
+    def add_floating_text(self, text, x, y, color):
+        if len(self.floating_texts) >= 2:
+            self.floating_texts.pop(0)
+        self.floating_texts.append(FloatingText(text, x, y, color))
+
     def spawn_sparks(self, x, y):
-        for _ in range(16):
-            vx = (random.random() - 0.5) * 6
-            vy = (random.random() - 0.8) * 6
+        if len(self.particles) >= 45:
+            return
+        for _ in range(8):
+            vx = (random.random() - 0.5) * 5
+            vy = (random.random() - 0.8) * 5
             c = random.choice([(250, 204, 21), (56, 189, 248), (255, 255, 255)])
-            self.particles.append(Particle(x, y, vx, vy, c, random.randint(2, 4), 1.0))
+            self.particles.append(Particle(x, y, vx, vy, c, random.randint(2, 3), 0.7))
 
     def _world_to_grid(self, x: float, y: float, cell_size: int = 30) -> Tuple[int, int]:
         return int(x // cell_size), int(y // cell_size)
@@ -530,18 +537,57 @@ class EcoStreamGameClient:
         font_small = pygame.font.SysFont("Segoe UI", 11)
         font_mono = pygame.font.SysFont("Consolas", 12, bold=True)
 
-        # Carga directa de texturas pixel art limpias con transparencia alfa
-        sprites = {}
+        # Carga directa y PRE-ESCALADO ÚNICO de texturas (optimización extrema de FPS)
+        raw_sprites = {}
         sprites_dir = ROOT_DIR / "client-python" / "assets" / "sprites"
         if sprites_dir.exists():
             for p in sprites_dir.glob("*.png"):
                 try:
-                    sprites[p.stem] = pygame.image.load(str(p)).convert_alpha()
+                    raw_sprites[p.stem] = pygame.image.load(str(p)).convert_alpha()
                 except Exception:
                     pass
-            logger.info(f"🎨 [Sprites Pygame] {len(sprites)} texturas individuales cargadas con transparencia.")
+            logger.info(f"🎨 [Sprites Pygame] {len(raw_sprites)} texturas individuales pre-cargadas en caché.")
         else:
             logger.warning("⚠️ [Sprites Pygame] Carpeta de sprites no encontrada. Usando fallback procedural.")
+
+        sprites = {}
+        flipped_workers = {}
+        scale_specs = {
+            "dam": (236, 118, True),
+            "plant": (345, 195, True),
+            "pipe_leaking": (230, 48, False),
+            "pipe_straight": (230, 36, False),
+            "valve_red": (26, 32, False),
+            "tree_oak": (60, 60, False),
+            "tree_pine": (38, 56, False),
+            "bush": (32, 28, False),
+            "flowers": (28, 24, False),
+            "icon_droplet": (20, 20, False),
+            "icon_wrench": (20, 20, False),
+            "icon_shovel": (20, 20, False),
+            "icon_recycle": (20, 20, False),
+        }
+        for k, (w, h, smooth) in scale_specs.items():
+            if k in raw_sprites:
+                sprites[k] = pygame.transform.smoothscale(raw_sprites[k], (w, h)) if smooth else pygame.transform.scale(raw_sprites[k], (w, h))
+
+        worker_keys = ["worker_idle", "worker_welder", "worker_wrench0", "worker_wrench1", "worker_shovel0", "worker_shovel1", "worker_walk0", "worker_walk1", "worker_walk2"]
+        for wk in worker_keys:
+            if wk in raw_sprites:
+                scaled_w = pygame.transform.scale(raw_sprites[wk], (36, 54))
+                sprites[wk] = scaled_w
+                flipped_workers[wk] = pygame.transform.flip(scaled_w, True, False)
+
+        # Pre-crear superficies reutilizables (evita asignaciones en cada frame)
+        shadow_surf = pygame.Surface((34, 12), pygame.SRCALPHA)
+        pygame.draw.ellipse(shadow_surf, (0, 0, 0, 110), (0, 0, 34, 12))
+
+        overlay_intro = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay_intro.fill((10, 14, 26, 235))
+        overlay_gameover = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay_gameover.fill((25, 5, 5, 235))
+        overlay_victory = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
+        overlay_victory.fill((5, 25, 10, 235))
 
         running = True
         wave_time = 0.0
@@ -584,9 +630,9 @@ class EcoStreamGameClient:
                                 self.vy = (self.vy / mag) * dash_speed
                             else:
                                 self.vx = dash_speed
-                            for _ in range(16):
-                                self.particles.append(Particle(self.player_x, self.player_y, (random.random()-0.5)*5, (random.random()-0.5)*5, (56, 189, 248), 3, 0.5))
-                            self.floating_texts.append(FloatingText("DASH!", self.player_x - 15, self.player_y - 25, (56, 189, 248)))
+                            if len(self.particles) < 45:
+                                for _ in range(8):
+                                    self.particles.append(Particle(self.player_x, self.player_y, (random.random()-0.5)*4, (random.random()-0.5)*4, (56, 189, 248), 2, 0.4))
                     elif not self.is_bot and event.key == pygame.K_SPACE:
                         # 1. Reducir: requiere proximidad física con las tuberías (X: ~440, Y: 140-300)
                         dist_to_pipes = math.hypot(self.player_x - 440, self.player_y - 215)
@@ -603,13 +649,11 @@ class EcoStreamGameClient:
                                         action_id=int(time.time()*1000),
                                         repair_pipe=gameplay_pb2.RepairPipeAction(pipe_id=p.pipe_id, repair_progress_delta=50.0)
                                     ))
-                                    self.floating_texts.append(FloatingText("+150 PTS (Fuga Reparada!)", self.player_x - 40, self.player_y - 20, (56, 189, 248)))
+                                    self.add_floating_text("+150 PTS", self.player_x - 24, self.player_y - 22, (56, 189, 248))
                                     logger.info(f"[Acción 3R - Reducir] Tubería #{p.pipe_id} reparada con éxito. +150 PTS")
                                     break
-                            if not repaired:
-                                self.floating_texts.append(FloatingText("Tuberias Seguras (Presion Normal)", self.player_x - 60, self.player_y - 20, (148, 163, 184)))
                         else:
-                            self.floating_texts.append(FloatingText("Acercate a la Zona de Tuberias", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.add_floating_text("Acércate a Tuberías", self.player_x - 45, self.player_y - 22, (251, 191, 36))
                     elif not self.is_bot and event.key == pygame.K_r:
                         # 2. Reusar: requiere proximidad física con el Huerto / Válvula (X: ~440, Y: 480)
                         dist_to_garden = math.hypot(self.player_x - 440, self.player_y - 480)
@@ -620,10 +664,10 @@ class EcoStreamGameClient:
                                 action_id=int(time.time()*1000),
                                 divert_valve=gameplay_pb2.DivertValveAction(valve_id=1, destination=gameplay_pb2.DESTINATION_IRRIGATION)
                             ))
-                            self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
+                            self.add_floating_text("+80 PTS", self.player_x - 24, self.player_y - 22, (52, 211, 153))
                             logger.info("[Acción 3R - Reusar] Válvula desviada a huerto comunitario. +80 PTS")
                         else:
-                            self.floating_texts.append(FloatingText("Acercate al Huerto Comunitario", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.add_floating_text("Acércate al Huerto", self.player_x - 45, self.player_y - 22, (251, 191, 36))
                     elif not self.is_bot and event.key == pygame.K_f:
                         # 3. Reciclar: requiere proximidad física con la Planta de Tratamiento UV (X: ~800, Y: 380)
                         dist_to_plant = math.hypot(self.player_x - 800, self.player_y - 380)
@@ -635,10 +679,10 @@ class EcoStreamGameClient:
                                 action_id=int(time.time()*1000),
                                 operate_recycle=gameplay_pb2.OperateRecycleAction(plant_id=1, operation=gameplay_pb2.OperateRecycleAction.RECYCLE_OP_LOAD_FILTER)
                             ))
-                            self.floating_texts.append(FloatingText("+120 PTS (Filtro UV Activado)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
+                            self.add_floating_text("+120 PTS", self.player_x - 24, self.player_y - 22, (192, 132, 252))
                             logger.info("[Acción 3R - Reciclar] Filtro UV activado. Pureza incrementada. +120 PTS")
                         else:
-                            self.floating_texts.append(FloatingText("Acercate a la Planta UV", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.add_floating_text("Acércate a Planta UV", self.player_x - 45, self.player_y - 22, (251, 191, 36))
 
             # Lógica y actualización en modo PLAYING
             if self.game_state == "PLAYING":
@@ -715,23 +759,24 @@ class EcoStreamGameClient:
                     self.game_state = "VICTORY"
                     logger.info("VICTORIA: Tiempo completado con métricas seguras.")
 
-            # Partículas continuas de fugas activas
-            for p in self.pipes:
-                if p.is_leaking and random.random() < 0.4:
-                    px = 440.0
-                    py = 180.0 + (p.pipe_id - 1) * 60.0
-                    self.particles.append(Particle(
-                        px + (random.random() - 0.5) * 20,
-                        py,
-                        (random.random() - 0.5) * 3,
-                        -random.random() * 4 - 1,
-                        (56, 189, 248),
-                        random.randint(2, 4),
-                        0.8
-                    ))
+            # Partículas continuas de fugas activas (con límite para alto rendimiento)
+            if len(self.particles) < 45:
+                for p in self.pipes:
+                    if p.is_leaking and random.random() < 0.25:
+                        px = 440.0
+                        py = 180.0 + (p.pipe_id - 1) * 60.0
+                        self.particles.append(Particle(
+                            px + (random.random() - 0.5) * 16,
+                            py,
+                            (random.random() - 0.5) * 2.5,
+                            -random.random() * 3.5 - 1,
+                            (56, 189, 248),
+                            2,
+                            0.6
+                        ))
 
             # -------------------------------------------------------------
-            # RENDERIZADO DEL MUNDO
+            # RENDERIZADO DEL MUNDO (CON SPRITES PRE-ESCALADOS EN CACHÉ)
             # -------------------------------------------------------------
             screen.fill(COLOR_BG)
 
@@ -747,18 +792,16 @@ class EcoStreamGameClient:
 
             # Ondas decorativas si hay agua
             if fill_h > 10:
-                for ox in range(35, 265, 8):
+                for ox in range(35, 265, 12):
                     oy = 110 + (530 - fill_h) + int(math.sin(ox * 0.08 + wave_time) * 3.0)
                     pygame.draw.circle(screen, (255, 255, 255), (ox, oy), 2)
 
             # Presa de concreto Pixel Art coronando el embalse
             if "dam" in sprites:
-                dam_surf = pygame.transform.smoothscale(sprites["dam"], (236, 118))
-                screen.blit(dam_surf, (32, 112))
+                screen.blit(sprites["dam"], (32, 112))
 
             if "icon_droplet" in sprites:
-                icon_d = pygame.transform.scale(sprites["icon_droplet"], (20, 20))
-                screen.blit(icon_d, (42, 122))
+                screen.blit(sprites["icon_droplet"], (42, 122))
                 screen.blit(font_med.render(f"EMBALSE: {self.reservoir_pct:.1f}%", True, COLOR_TEXT), (68, 123))
             else:
                 screen.blit(font_med.render(f"EMBALSE: {self.reservoir_pct:.1f}%", True, COLOR_TEXT), (45, 125))
@@ -769,8 +812,7 @@ class EcoStreamGameClient:
             pygame.draw.rect(screen, (71, 85, 105), z1, 2, border_radius=12)
 
             if "icon_wrench" in sprites:
-                icon_w = pygame.transform.scale(sprites["icon_wrench"], (20, 20))
-                screen.blit(icon_w, (315, 120))
+                screen.blit(sprites["icon_wrench"], (315, 120))
                 screen.blit(font_med.render("1. REDUCIR (Fugas Comunales)", True, (248, 113, 113)), (340, 122))
             else:
                 screen.blit(font_med.render("1. REDUCIR (Fugas Comunales)", True, (248, 113, 113)), (315, 122))
@@ -779,24 +821,20 @@ class EcoStreamGameClient:
                 py_y = 160 + i * 60
                 drawn_pipe = False
                 if p.is_leaking and "pipe_leaking" in sprites:
-                    pipe_s = pygame.transform.scale(sprites["pipe_leaking"], (230, 48))
-                    screen.blit(pipe_s, (315, py_y - 6))
+                    screen.blit(sprites["pipe_leaking"], (315, py_y - 6))
                     drawn_pipe = True
                 elif not p.is_leaking and "pipe_straight" in sprites:
-                    pipe_s = pygame.transform.scale(sprites["pipe_straight"], (230, 36))
-                    screen.blit(pipe_s, (315, py_y))
+                    screen.blit(sprites["pipe_straight"], (315, py_y))
                     drawn_pipe = True
 
                 if "valve_red" in sprites:
-                    valve_s = pygame.transform.scale(sprites["valve_red"], (26, 32))
-                    screen.blit(valve_s, (550, py_y + 2))
+                    screen.blit(sprites["valve_red"], (550, py_y + 2))
 
                 if not drawn_pipe:
                     p_color = COLOR_PIPE_LEAK if p.is_leaking else COLOR_PIPE_OK
                     pygame.draw.rect(screen, p_color, (315, py_y, 260, 36), border_radius=6)
 
-                txt = f"Tuberia #{p.pipe_id}: {'[!] FUGA CRITICA' if p.is_leaking else '(OK) Presion Estable'}"
-                screen.blit(font_small.render(txt, True, (0, 0, 0)), (326, py_y + 9))
+                txt = f"Tuberia #{p.pipe_id}: {'[!] FUGA' if p.is_leaking else '(OK)'}"
                 screen.blit(font_small.render(txt, True, (255, 255, 255) if not p.is_leaking else (254, 202, 202)), (325, py_y + 8))
 
             # C. ZONA 2: REUSAR
@@ -805,8 +843,7 @@ class EcoStreamGameClient:
             pygame.draw.rect(screen, (34, 197, 94), z2, 2, border_radius=12)
 
             if "icon_shovel" in sprites:
-                icon_s = pygame.transform.scale(sprites["icon_shovel"], (20, 20))
-                screen.blit(icon_s, (315, 393))
+                screen.blit(sprites["icon_shovel"], (315, 393))
                 screen.blit(font_med.render("2. REUSAR (Huertos Comunitarios)", True, (134, 239, 172)), (340, 395))
             else:
                 screen.blit(font_med.render("2. REUSAR (Huertos Comunitarios)", True, (134, 239, 172)), (315, 395))
@@ -814,21 +851,19 @@ class EcoStreamGameClient:
             screen.blit(font_small.render(f"Reuso acumulado: {self.liters_reused:.0f} L", True, (220, 252, 231)), (315, 425))
             screen.blit(font_small.render("Valvula canalizada a riego por goteo", True, COLOR_TEXT_MUTED), (315, 445))
 
-            # Vegetación y árboles pixel art en el huerto (limpios sin fondos blancos)
             if "tree_oak" in sprites:
-                screen.blit(pygame.transform.scale(sprites["tree_oak"], (60, 60)), (520, 388))
+                screen.blit(sprites["tree_oak"], (520, 388))
             if "tree_pine" in sprites:
-                screen.blit(pygame.transform.scale(sprites["tree_pine"], (38, 56)), (480, 390))
+                screen.blit(sprites["tree_pine"], (480, 390))
 
-            # Parcelas de tierra labrada con cultivos pixel art
             for idx_c, cx in enumerate(range(320, 560, 58)):
                 pygame.draw.rect(screen, (69, 26, 3), (cx, 485, 48, 38), border_radius=4)
                 pygame.draw.rect(screen, (120, 53, 15), (cx + 4, 492, 40, 4))
                 pygame.draw.rect(screen, (120, 53, 15), (cx + 4, 506, 40, 4))
                 if "bush" in sprites and idx_c % 2 == 0:
-                    screen.blit(pygame.transform.scale(sprites["bush"], (32, 28)), (cx + 8, 488))
+                    screen.blit(sprites["bush"], (cx + 8, 488))
                 elif "flowers" in sprites:
-                    screen.blit(pygame.transform.scale(sprites["flowers"], (28, 24)), (cx + 10, 492))
+                    screen.blit(sprites["flowers"], (cx + 10, 492))
 
             # D. ZONA 3: RECICLAR
             z3 = pygame.Rect(615, 110, 380, 530)
@@ -836,21 +871,18 @@ class EcoStreamGameClient:
             pygame.draw.rect(screen, COLOR_PLANT, z3, 2, border_radius=12)
 
             if "icon_recycle" in sprites:
-                icon_r = pygame.transform.scale(sprites["icon_recycle"], (20, 20))
-                screen.blit(icon_r, (630, 123))
+                screen.blit(sprites["icon_recycle"], (630, 123))
                 screen.blit(font_med.render("3. RECICLAR (Planta Filtrado UV)", True, (216, 180, 254)), (655, 125))
             else:
                 screen.blit(font_med.render("3. RECICLAR (Planta Filtrado UV)", True, (216, 180, 254)), (630, 125))
 
-            # Complejo de Planta de Filtrado Industrial Pixel Art
             if "plant" in sprites:
-                plant_surf = pygame.transform.smoothscale(sprites["plant"], (345, 195))
-                screen.blit(plant_surf, (632, 148))
+                screen.blit(sprites["plant"], (632, 148))
 
             screen.blit(font_med.render(f"Pureza Hidrica: {self.purity_pct:.1f}%", True, COLOR_PURITY), (630, 355))
             screen.blit(font_small.render(f"Agua Descontaminada: {self.liters_recycled:.0f} L", True, (243, 232, 255)), (630, 380))
 
-            # Turbina/Reactor de Biofiltración y Rayos UV (Animado con brillo)
+            # Turbina/Reactor de Biofiltración y Rayos UV
             center_x, center_y = 805, 480
             pygame.draw.circle(screen, (168, 85, 247), (center_x, center_y), 52, 3)
             pygame.draw.circle(screen, (216, 180, 254), (center_x, center_y), 22)
@@ -868,16 +900,12 @@ class EcoStreamGameClient:
             for p in self.particles:
                 pygame.draw.circle(screen, p.color, (int(p.x), int(p.y)), p.size)
 
-            # Helper para renderizado del personaje AquaGuardian
+            # Helper para renderizado del personaje AquaGuardian (usando caché pre-escalada)
             def draw_character(x, y, vx, vy, is_dashing, is_bot_char, label, is_self=False):
-                # Sombra elíptica en el suelo
-                shadow_surf = pygame.Surface((34, 12), pygame.SRCALPHA)
-                pygame.draw.ellipse(shadow_surf, (0, 0, 0, 110), (0, 0, 34, 12))
                 screen.blit(shadow_surf, (int(x) - 17, int(y) + 16))
 
-                # Halo luminoso
                 halo_col = (251, 191, 36) if is_dashing else ((56, 189, 248) if is_self else (34, 197, 94))
-                pygame.draw.circle(screen, halo_col, (int(x), int(y) + 2), 24, 2)
+                pygame.draw.circle(screen, halo_col, (int(x), int(y) + 2), 22, 2)
 
                 char_drawn = False
                 if sprites:
@@ -886,23 +914,21 @@ class EcoStreamGameClient:
                     d_pipe_chk = math.hypot(x - 440, y - 215)
                     d_garden_chk = math.hypot(x - 440, y - 480)
 
-                    char_sprite = sprites.get("worker_idle")
-                    if is_dashing:
-                        char_sprite = sprites.get("worker_welder", char_sprite)
+                    sprite_key = "worker_idle"
+                    if is_dashing and "worker_welder" in sprites:
+                        sprite_key = "worker_welder"
                     elif d_pipe_chk < 140 and any(p.is_leaking for p in self.pipes):
-                        frames = [sprites.get(f"worker_wrench{i}") for i in (0, 1) if sprites.get(f"worker_wrench{i}")]
-                        if frames: char_sprite = frames[int(wave_time * 3) % len(frames)]
+                        keys_f = [f"worker_wrench{i}" for i in (0, 1) if f"worker_wrench{i}" in sprites]
+                        if keys_f: sprite_key = keys_f[int(wave_time * 3) % len(keys_f)]
                     elif d_garden_chk < 150:
-                        frames = [sprites.get(f"worker_shovel{i}") for i in (0, 1) if sprites.get(f"worker_shovel{i}")]
-                        if frames: char_sprite = frames[int(wave_time * 2.5) % len(frames)]
+                        keys_f = [f"worker_shovel{i}" for i in (0, 1) if f"worker_shovel{i}" in sprites]
+                        if keys_f: sprite_key = keys_f[int(wave_time * 2.5) % len(keys_f)]
                     elif is_moving:
-                        frames = [sprites.get(f"worker_walk{i}") for i in (0, 1, 2) if sprites.get(f"worker_walk{i}")]
-                        if frames: char_sprite = frames[int(wave_time * 4) % len(frames)]
+                        keys_f = [f"worker_walk{i}" for i in (0, 1, 2) if f"worker_walk{i}" in sprites]
+                        if keys_f: sprite_key = keys_f[int(wave_time * 4) % len(keys_f)]
 
-                    if char_sprite:
-                        worker_s = pygame.transform.scale(char_sprite, (36, 54))
-                        if flip_x:
-                            worker_s = pygame.transform.flip(worker_s, True, False)
+                    worker_s = flipped_workers.get(sprite_key) if flip_x else sprites.get(sprite_key)
+                    if worker_s:
                         screen.blit(worker_s, (int(x) - 18, int(y) - 28))
                         char_drawn = True
 
@@ -911,9 +937,8 @@ class EcoStreamGameClient:
                     pygame.draw.circle(screen, avatar_col, (int(x), int(y)), 18)
                     pygame.draw.circle(screen, (255, 255, 255), (int(x), int(y)), 18, 2)
 
-                # Etiqueta de identificación
                 tag_surf = font_small.render(label, True, (255, 255, 255))
-                screen.blit(tag_surf, (int(x) - tag_surf.get_width() // 2, int(y) - 44))
+                screen.blit(tag_surf, (int(x) - tag_surf.get_width() // 2, int(y) - 42))
 
             # F. OTROS JUGADORES CONECTADOS
             for rp in self.remote_players:
@@ -924,7 +949,7 @@ class EcoStreamGameClient:
             self_lbl = "BOT" if self.is_bot else "TU"
             draw_character(self.player_x, self.player_y, self.vx, self.vy, self.dash_timer > 0, self.is_bot, self_lbl, is_self=True)
 
-            # TOOLTIP FLOTANTE DE INTERACCIÓN SEGÚN PROXIMIDAD
+            # TOOLTIP COMPACTO DE INTERACCIÓN SEGÚN PROXIMIDAD (debajo del personaje)
             if not self.is_bot and self.game_state == "PLAYING":
                 d_pipe = math.hypot(self.player_x - 440, self.player_y - 215)
                 d_garden = math.hypot(self.player_x - 440, self.player_y - 480)
@@ -932,28 +957,28 @@ class EcoStreamGameClient:
 
                 prompt = None
                 if d_pipe < 140:
-                    prompt = "[ESPACIO] Reparar Fuga"
+                    prompt = "[ESPACIO] Reparar"
                 elif d_garden < 150:
-                    prompt = "[R] Regar Huerto"
+                    prompt = "[R] Regar"
                 elif d_plant < 170:
-                    prompt = "[F] Filtrado UV"
+                    prompt = "[F] Filtrar"
 
                 if prompt:
                     p_surf = font_small.render(prompt, True, (254, 240, 138))
-                    screen.blit(p_surf, (int(self.player_x) - 40, int(self.player_y) - 34))
+                    screen.blit(p_surf, (int(self.player_x) - p_surf.get_width() // 2, int(self.player_y) + 26))
 
-            # H. TEXTOS FLOTANTES
+            # H. TEXTOS FLOTANTES COMPACTOS (fuente pequeña, no invasivos)
             self.floating_texts = [ft for ft in self.floating_texts if ft.update()]
             for ft in self.floating_texts:
-                screen.blit(font_med.render(ft.text, True, ft.color), (int(ft.x), int(ft.y)))
+                screen.blit(font_small.render(ft.text, True, ft.color), (int(ft.x), int(ft.y)))
 
-            # I. EVENTOS CLIMÁTICOS / CAOS DINÁMICO
+            # I. EVENTOS CLIMÁTICOS / CAOS DINÁMICO (pill compacto superior)
             if self.active_events and self.game_state == "PLAYING":
                 ev = self.active_events[0]
-                ev_rect = pygame.Rect(WINDOW_WIDTH // 2 - 210, 90, 420, 26)
-                pygame.draw.rect(screen, (185, 28, 28), ev_rect, border_radius=6)
-                pygame.draw.rect(screen, (254, 202, 202), ev_rect, 1, border_radius=6)
-                screen.blit(font_small.render(f"[ALERTA] {ev.title} ({ev.remaining_seconds}s)", True, (255, 255, 255)), (WINDOW_WIDTH // 2 - 195, 95))
+                ev_rect = pygame.Rect(WINDOW_WIDTH // 2 - 140, 88, 280, 20)
+                pygame.draw.rect(screen, (153, 27, 27), ev_rect, border_radius=10)
+                ev_surf = font_small.render(f"{ev.title} ({ev.remaining_seconds}s)", True, (255, 255, 255))
+                screen.blit(ev_surf, (WINDOW_WIDTH // 2 - ev_surf.get_width() // 2, 90))
 
             # J. HUD SUPERIOR (SIN SOLAPAMIENTOS)
             pygame.draw.rect(screen, COLOR_PANEL_BG, (0, 0, WINDOW_WIDTH, 85))
@@ -985,21 +1010,18 @@ class EcoStreamGameClient:
             screen.blit(font_mono.render(ping_txt, True, ping_color), (WINDOW_WIDTH - 215, 20))
             screen.blit(font_small.render(status_txt, True, ping_color), (WINDOW_WIDTH - 215, 44))
 
-            # Banner no bloqueante de corte de red (Prueba del Profesor) - Posición Y:88 para evitar colisión
+            # Indicador compacto de red offline (no invasivo)
             if not self.is_connected and self.game_state == "PLAYING":
-                banner_rect = pygame.Rect(WINDOW_WIDTH // 2 - 240, 88, 480, 22)
-                pygame.draw.rect(screen, (154, 52, 18), banner_rect, border_radius=6)
-                pygame.draw.rect(screen, (249, 115, 22), banner_rect, 1, border_radius=6)
-                b_txt = font_small.render("[AVISO RED] Corte detectado: Modo contingencia local y reconexion activa", True, (255, 255, 255))
-                screen.blit(b_txt, (WINDOW_WIDTH // 2 - b_txt.get_width() // 2, 91))
+                banner_rect = pygame.Rect(WINDOW_WIDTH - 230, 76, 215, 18)
+                pygame.draw.rect(screen, (154, 52, 18), banner_rect, border_radius=4)
+                b_txt = font_small.render("Modo contingencia local", True, (254, 215, 170))
+                screen.blit(b_txt, (WINDOW_WIDTH - 230 + (215 - b_txt.get_width()) // 2, 77))
 
             # =============================================================
             # K. OVERLAYS DE ESTADO (INTRODUCCIÓN, DERROTA Y VICTORIA)
             # =============================================================
             if self.game_state == "INTRO":
-                overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((10, 14, 26, 235))
-                screen.blit(overlay, (0, 0))
+                screen.blit(overlay_intro, (0, 0))
 
                 card_w, card_h = 760, 520
                 cx = (WINDOW_WIDTH - card_w) // 2
@@ -1040,9 +1062,7 @@ class EcoStreamGameClient:
                 screen.blit(btn_txt, (cx + 180 + (400 - btn_txt.get_width()) // 2, by + 13))
 
             elif self.game_state == "GAMEOVER":
-                overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((25, 5, 5, 235))
-                screen.blit(overlay, (0, 0))
+                screen.blit(overlay_gameover, (0, 0))
 
                 card_w, card_h = 680, 380
                 cx = (WINDOW_WIDTH - card_w) // 2
@@ -1068,9 +1088,7 @@ class EcoStreamGameClient:
                 screen.blit(re_txt, (cx + 140 + (400 - re_txt.get_width()) // 2, by + 14))
 
             elif self.game_state == "VICTORY":
-                overlay = pygame.Surface((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((5, 25, 10, 235))
-                screen.blit(overlay, (0, 0))
+                screen.blit(overlay_victory, (0, 0))
 
                 card_w, card_h = 680, 380
                 cx = (WINDOW_WIDTH - card_w) // 2

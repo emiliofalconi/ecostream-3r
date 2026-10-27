@@ -396,6 +396,7 @@ impl GameRoomSimulation {
                 reason: "¡Sequía Crítica! El nivel del embalse se ha agotado por completo.".to_string(),
                 final_score: self.team_score,
                 final_metrics: Some(metrics.clone()),
+                player_scores: Vec::new(),
             };
             self.match_end_event = Some(end.clone());
             new_end_event = Some(end);
@@ -411,6 +412,7 @@ impl GameRoomSimulation {
                 reason: format!("¡Misión Cumplida! Embalse preservado con éxito (+{} pts bono sostenibilidad).", sustainability_bonus),
                 final_score: self.team_score,
                 final_metrics: Some(metrics.clone()),
+                player_scores: Vec::new(),
             };
             self.match_end_event = Some(end.clone());
             new_end_event = Some(end);

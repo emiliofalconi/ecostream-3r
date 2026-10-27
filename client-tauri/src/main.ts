@@ -289,11 +289,14 @@ for (let r = 0; r < 3; r++) {
 
 let isGameStarted = false;
 let naturalLeakTimer = 12.0;
+let cachedBgGrad: CanvasGradient | null = null;
+let threatHitCooldown = 0;
 
 // Redimensionar Canvas
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight - 76;
+  cachedBgGrad = null;
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
@@ -390,22 +393,22 @@ function triggerDash() {
   triggerScreenShake(4);
   sound.playDash();
 
-  // Partículas de estela de viento / agua
-  for (let i = 0; i < 20; i++) {
-    particles.push({
-      x: p.x + (Math.random() - 0.5) * 16,
-      y: p.y + (Math.random() - 0.5) * 16,
-      vx: -dashDx * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
-      vy: -dashDy * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
-      life: 0.55,
-      maxLife: 0.55,
-      color: ['#38bdf8', '#0ea5e9', '#ffffff', '#7dd3fc'][Math.floor(Math.random() * 4)],
-      size: 2.5 + Math.random() * 2.5,
-      type: 'water',
-    });
+  // Partículas de estela de viento / agua (optimizado)
+  if (particles.length < 55) {
+    for (let i = 0; i < 8; i++) {
+      particles.push({
+        x: p.x + (Math.random() - 0.5) * 14,
+        y: p.y + (Math.random() - 0.5) * 14,
+        vx: -dashDx * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
+        vy: -dashDy * (Math.random() * 4 + 2) + (Math.random() - 0.5) * 2,
+        life: 0.45,
+        maxLife: 0.45,
+        color: ['#38bdf8', '#0ea5e9', '#ffffff', '#7dd3fc'][Math.floor(Math.random() * 4)],
+        size: 2.5,
+        type: 'water',
+      });
+    }
   }
-
-  showToast('⚡ ¡IMPULSO DASH ACTIVADO!', 'reuse');
 }
 
 // Control de Modales (Intro Onboarding y Game Over)
@@ -527,23 +530,29 @@ canvas.addEventListener('click', (e) => {
   sound.playWaterSplash();
 });
 
-// Toast Notificaciones
+// Toast Notificaciones (compactas, máximo 2 visibles en esquina)
 function showToast(msg: string, type: 'reduce' | 'reuse' | 'recycle') {
   const container = document.getElementById('toastContainer');
   if (!container) return;
+  while (container.children.length >= 2) {
+    container.firstElementChild?.remove();
+  }
   const t = document.createElement('div');
   t.className = `toast ${type}`;
   t.innerHTML = `<span>${type === 'reduce' ? '🔧' : type === 'reuse' ? '🌱' : '⚗️'}</span> <span>${msg}</span>`;
   container.appendChild(t);
   setTimeout(() => {
     t.style.opacity = '0';
-    t.style.transition = 'opacity 0.3s ease';
-    setTimeout(() => t.remove(), 300);
-  }, 2200);
+    t.style.transition = 'opacity 0.2s ease';
+    setTimeout(() => t.remove(), 200);
+  }, 1300);
 }
 
 function spawnFloatingText(text: string, x: number, y: number, color: string) {
-  floatingTexts.push({ text, x, y, vy: -1.5, alpha: 1.0, color });
+  if (floatingTexts.length >= 3) {
+    floatingTexts.shift();
+  }
+  floatingTexts.push({ text, x, y, vy: -1.4, alpha: 0.95, color });
 }
 
 function register3RComboAction(actionName: string) {
@@ -611,29 +620,28 @@ function actionReduce() {
       lineWidth: 3,
     });
 
-    // Chispas de soldadura metálica
-    for (let i = 0; i < 28; i++) {
-      particles.push({
-        x: leaking.x + 110,
-        y: leaking.y + 13,
-        vx: (Math.random() - 0.5) * 8.5,
-        vy: (Math.random() - 0.7) * 7.5,
-        life: 1.0,
-        maxLife: 1.0,
-        color: ['#fbbf24', '#f59e0b', '#38bdf8', '#ffffff'][Math.floor(Math.random() * 4)],
-        size: 2 + Math.random() * 3,
-        type: 'spark',
-      });
+    // Chispas de soldadura metálica (optimizado)
+    if (particles.length < 55) {
+      for (let i = 0; i < 12; i++) {
+        particles.push({
+          x: leaking.x + 110,
+          y: leaking.y + 13,
+          vx: (Math.random() - 0.5) * 7.5,
+          vy: (Math.random() - 0.7) * 6.5,
+          life: 0.7,
+          maxLife: 0.7,
+          color: ['#fbbf24', '#f59e0b', '#38bdf8', '#ffffff'][Math.floor(Math.random() * 4)],
+          size: 2.5,
+          type: 'spark',
+        });
+      }
     }
 
     register3RComboAction('reduce');
-    spawnFloatingText(`+${earnedScore} PTS (80L Salvados!)`, leaking.x + 60, leaking.y - 10, '#38bdf8');
-    showToast(isBurst ? '🚨 ¡Fuga de emergencia contenida! +220 PTS' : '¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
+    spawnFloatingText(`+${earnedScore} PTS (80L)`, leaking.x + 60, leaking.y - 8, '#38bdf8');
     updateHUD();
   } else {
-    // Si no hay roturas activas, dar feedback positivo y NUNCA romper tuberías artificialmente
     sound.playButtonClick();
-    showToast('Tuberías seguras. Presión hidráulica nominal.', 'reduce');
   }
 }
 
@@ -1098,6 +1106,8 @@ function gameLoop(now: number) {
     });
   }
 
+  if (threatHitCooldown > 0) threatHitCooldown = Math.max(0, threatHitCooldown - dt);
+
   for (let i = threats.length - 1; i >= 0; i--) {
     const t = threats[i];
     t.x += t.vx * dt;
@@ -1108,18 +1118,17 @@ function gameLoop(now: number) {
     if (dPlayer < t.radius + 18) {
       if (p.isDashing) {
         sound.playWaterSplash();
-        triggerScreenShake(7);
+        triggerScreenShake(5);
         state.score += 75;
-        spawnFloatingText('💥 ¡CONTAMINANTE DESTRUIDO CON DASH! +75 PTS', t.x - 60, t.y - 25, '#f43f5e');
-        showToast('¡Amenaza evaporada con Dash sónico!', 'recycle');
-        for (let k = 0; k < 18; k++) {
+        spawnFloatingText('+75 PTS (Toxina Destruida)', t.x - 45, t.y - 20, '#f43f5e');
+        for (let k = 0; k < 8; k++) {
           particles.push({
             x: t.x,
             y: t.y,
-            vx: (Math.random() - 0.5) * 6,
-            vy: (Math.random() - 0.5) * 6,
-            life: 0.5,
-            maxLife: 0.5,
+            vx: (Math.random() - 0.5) * 5,
+            vy: (Math.random() - 0.5) * 5,
+            life: 0.45,
+            maxLife: 0.45,
             color: '#a855f7',
             size: 3,
             type: 'bubble',
@@ -1128,19 +1137,20 @@ function gameLoop(now: number) {
         threats.splice(i, 1);
         updateHUD();
         continue;
-      } else {
-        state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 1.0);
-        spawnFloatingText('⚠️ ¡TOXINA! Pureza -1.0% (¡Usa DASH para destruirla!)', p.x - 60, p.y - 25, '#ef4444');
-        p.vx = -p.vx * 1.5;
-        p.vy = -p.vy * 1.5;
-        triggerScreenShake(4);
+      } else if (threatHitCooldown <= 0) {
+        threatHitCooldown = 1.2;
+        state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 1.5);
+        spawnFloatingText('-1.5% Pureza (Usa SHIFT)', p.x - 45, p.y - 25, '#ef4444');
+        p.vx = -p.vx * 1.2;
+        p.vy = -p.vy * 1.2;
+        triggerScreenShake(3);
       }
     }
 
     if (t.x < 260) {
       state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 3.5);
-      spawnFloatingText('⚠️ ¡Contaminante llegó al embalse! Pureza -3.5%', 220, t.y, '#dc2626');
-      triggerScreenShake(6);
+      spawnFloatingText('-3.5% Pureza', 220, t.y, '#dc2626');
+      triggerScreenShake(4);
       threats.splice(i, 1);
       updateHUD();
     }
@@ -1164,31 +1174,31 @@ function gameLoop(now: number) {
     screenShake = Math.max(0, screenShake * 0.86 - 0.25);
   }
 
-  // 1. Limpiar Fondo con Gradiente Sutil de Profundidad
-  const bgGrad = ctx.createRadialGradient(
-    canvas.width / 2, canvas.height / 2, 50,
-    canvas.width / 2, canvas.height / 2, canvas.width
-  );
-  bgGrad.addColorStop(0, '#0d1527');
-  bgGrad.addColorStop(1, '#060911');
-  ctx.fillStyle = bgGrad;
+  // 1. Limpiar Fondo con Gradiente Cacheado (alto rendimiento)
+  if (!cachedBgGrad) {
+    cachedBgGrad = ctx.createRadialGradient(
+      canvas.width / 2, canvas.height / 2, 50,
+      canvas.width / 2, canvas.height / 2, canvas.width
+    );
+    cachedBgGrad.addColorStop(0, '#0d1527');
+    cachedBgGrad.addColorStop(1, '#060911');
+  }
+  ctx.fillStyle = cachedBgGrad;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  // Cuadrícula sutil de fondo
+  // Cuadrícula sutil de fondo en un solo path (1 draw call)
   ctx.strokeStyle = 'rgba(56, 189, 248, 0.03)';
   ctx.lineWidth = 1;
-  for (let x = 0; x < canvas.width; x += 40) {
-    ctx.beginPath();
+  ctx.beginPath();
+  for (let x = 0; x < canvas.width; x += 48) {
     ctx.moveTo(x, 0);
     ctx.lineTo(x, canvas.height);
-    ctx.stroke();
   }
-  for (let y = 0; y < canvas.height; y += 40) {
-    ctx.beginPath();
+  for (let y = 0; y < canvas.height; y += 48) {
     ctx.moveTo(0, y);
     ctx.lineTo(canvas.width, y);
-    ctx.stroke();
   }
+  ctx.stroke();
 
   // ------------------------------------------------------------------------
   // 2. ZONA A: EMBALSE CENTRAL CON OLAS SINUSOIDALES Y BURBUJAS
@@ -1338,27 +1348,26 @@ function gameLoop(now: number) {
       }
     }
 
-    // Texto de estado con sombra para máxima legibilidad
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 3;
-    ctx.fillStyle = '#ffffff';
+    // Texto de estado sin shadowBlur costoso
     ctx.font = '600 11px Outfit, sans-serif';
-    const statusText = pipe.isLeaking ? `Tubería #${pipe.id} [⚠️ ROTURA CRÍTICA - ESPACIO]` : `Tubería #${pipe.id} [OK - Presión Estable]`;
+    const statusText = pipe.isLeaking ? `Tubería #${pipe.id} [⚠️ ROTURA - ESPACIO]` : `Tubería #${pipe.id} [OK]`;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillText(statusText, pipe.x + 13, pipe.y + 18);
+    ctx.fillStyle = '#ffffff';
     ctx.fillText(statusText, pipe.x + 12, pipe.y + 17);
-    ctx.shadowBlur = 0;
 
-    // Si tiene fuga: chorro de agua animado
-    if (pipe.isLeaking) {
-      if (Math.random() < 0.6) {
+    // Si tiene fuga: chorro de agua animado (con tope de partículas)
+    if (pipe.isLeaking && particles.length < 55) {
+      if (Math.random() < 0.35) {
         particles.push({
           x: pipe.x + 110 + (Math.random() - 0.5) * 15,
           y: pipe.y + 5,
-          vx: (Math.random() - 0.5) * 4,
-          vy: -Math.random() * 5 - 2,
-          life: 1.0,
-          maxLife: 1.0,
+          vx: (Math.random() - 0.5) * 3.5,
+          vy: -Math.random() * 4 - 1.5,
+          life: 0.7,
+          maxLife: 0.7,
           color: 'rgba(56, 189, 248, 0.85)',
-          size: 3 + Math.random() * 2,
+          size: 2.5,
           type: 'water',
         });
       }
@@ -1790,19 +1799,19 @@ function gameLoop(now: number) {
     ctx.fillText('⚡ SHIFT', 0, -36);
   }
 
-  // Etiqueta superior del jugador
-  ctx.fillStyle = '#ffffff';
+  // Etiqueta superior del jugador (sin shadowBlur costoso)
   ctx.font = 'bold 10px Outfit, sans-serif';
   ctx.textAlign = 'center';
-  ctx.shadowColor = '#000000';
-  ctx.shadowBlur = 4;
-  ctx.fillText(session.username || 'Guardián', 0, -25);
-  ctx.shadowBlur = 0;
+  const uName = session.username || 'Guardián';
+  ctx.fillStyle = '#0f172a';
+  ctx.fillText(uName, 1, -24);
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(uName, 0, -25);
   ctx.textAlign = 'left';
 
   ctx.restore();
 
-  // Aura interactiva de proximidad holográfica
+  // Tooltip compacto de proximidad (sin cubrir al personaje)
   const dPipe = Math.hypot(state.player.x - 410, state.player.y - 220);
   const dGarden = Math.hypot(state.player.x - 410, state.player.y - 440);
   const dPlant = Math.hypot(state.player.x - 780, state.player.y - 340);
@@ -1810,74 +1819,65 @@ function gameLoop(now: number) {
   let auraColor: string | null = null;
   let auraPrompt: string | null = null;
 
-  if (dPipe < 160) {
+  if (dPipe < 150) {
     auraColor = '#38bdf8';
-    auraPrompt = '[ESPACIO] 🔧 REPARAR FUGA';
-  } else if (dGarden < 160) {
+    auraPrompt = '[ESPACIO] Reparar';
+  } else if (dGarden < 150) {
     auraColor = '#34d399';
-    auraPrompt = '[R] 🌱 CANALIZAR RIEGO';
-  } else if (dPlant < 170) {
+    auraPrompt = '[R] Regar';
+  } else if (dPlant < 160) {
     auraColor = '#c084fc';
-    auraPrompt = '[F] ⚗️ PURIFICAR AGUA';
+    auraPrompt = '[F] Filtrar';
   }
 
   if (auraColor && auraPrompt) {
     ctx.save();
-    ctx.strokeStyle = auraColor;
-    ctx.lineWidth = 2.5;
-    ctx.globalAlpha = 0.75 + Math.sin(state.tick * 0.15) * 0.25;
-    ctx.beginPath();
-    ctx.arc(state.player.x, state.player.y + 6, 28, 0, Math.PI * 2);
-    ctx.stroke();
-
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.92)';
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
     ctx.strokeStyle = auraColor;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.roundRect(state.player.x - 75, state.player.y - 48, 150, 22, 6);
+    ctx.roundRect(state.player.x - 52, state.player.y + 24, 104, 18, 5);
     ctx.fill();
     ctx.stroke();
 
-    ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 11px Outfit, sans-serif';
+    ctx.fillStyle = '#f8fafc';
+    ctx.font = '600 10px Outfit, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(auraPrompt, state.player.x, state.player.y - 33);
+    ctx.fillText(auraPrompt, state.player.x, state.player.y + 36);
     ctx.restore();
   }
 
   // Clima Dinámico y Evento de Caos
   if (state.activeChaos?.type === 'heatwave') {
-    ctx.fillStyle = 'rgba(245, 158, 11, 0.08)';
+    ctx.fillStyle = 'rgba(245, 158, 11, 0.05)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
   } else if (state.activeChaos?.type === 'rain') {
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.45)';
-    ctx.lineWidth = 1.5;
-    for (let r = 0; r < 40; r++) {
-      const rx = (state.tick * 9 + r * 37) % canvas.width;
-      const ry = (state.tick * 18 + r * 31) % canvas.height;
-      ctx.beginPath();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let r = 0; r < 24; r++) {
+      const rx = (state.tick * 9 + r * 47) % canvas.width;
+      const ry = (state.tick * 18 + r * 37) % canvas.height;
       ctx.moveTo(rx, ry);
-      ctx.lineTo(rx - 3, ry + 16);
-      ctx.stroke();
+      ctx.lineTo(rx - 2, ry + 14);
     }
+    ctx.stroke();
   }
 
-  // Banner Superior de Evento de Caos
+  // Pill Compacto de Evento de Caos (esquina superior, no invasivo)
   if (state.activeChaos) {
-    const bannerW = 440;
+    const bannerW = 310;
     const bannerX = (canvas.width - bannerW) / 2;
-    ctx.fillStyle = state.activeChaos.type === 'burst' ? 'rgba(220, 38, 38, 0.92)' : (state.activeChaos.type === 'heatwave' ? 'rgba(217, 119, 6, 0.92)' : 'rgba(2, 132, 199, 0.92)');
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5;
+    ctx.fillStyle = state.activeChaos.type === 'burst' ? 'rgba(185, 28, 28, 0.82)' : (state.activeChaos.type === 'heatwave' ? 'rgba(180, 83, 9, 0.82)' : 'rgba(3, 105, 161, 0.82)');
     ctx.beginPath();
-    ctx.roundRect(bannerX, 10, bannerW, 30, 8);
+    ctx.roundRect(bannerX, 8, bannerW, 22, 11);
     ctx.fill();
-    ctx.stroke();
 
     ctx.fillStyle = '#ffffff';
-    ctx.font = 'bold 12px Outfit, sans-serif';
+    ctx.font = '600 10.5px Outfit, sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(`${state.activeChaos.title} (${Math.ceil(state.activeChaos.duration)}s)`, canvas.width / 2, 29);
+    ctx.fillText(`${state.activeChaos.title} (${Math.ceil(state.activeChaos.duration)}s)`, canvas.width / 2, 23);
+    ctx.textAlign = 'left';
   }
 
   // Badge de Combo Multiplicador en Canvas
@@ -1921,12 +1921,12 @@ function gameLoop(now: number) {
   }
 
   // ------------------------------------------------------------------------
-  // 8. TEXTOS FLOTANTES DE PUNTAJE Y ACCIONES
+  // 8. TEXTOS FLOTANTES COMPACTOS (SIN SHADOWBLUR COSTOSO)
   // ------------------------------------------------------------------------
   for (let i = floatingTexts.length - 1; i >= 0; i--) {
     const ft = floatingTexts[i];
     ft.y += ft.vy;
-    ft.alpha -= 0.015;
+    ft.alpha -= 0.025;
 
     if (ft.alpha <= 0) {
       floatingTexts.splice(i, 1);
@@ -1934,11 +1934,11 @@ function gameLoop(now: number) {
     }
 
     ctx.save();
-    ctx.fillStyle = ft.color;
     ctx.globalAlpha = Math.max(0, ft.alpha);
-    ctx.font = 'bold 13px Outfit, sans-serif';
-    ctx.shadowColor = '#000000';
-    ctx.shadowBlur = 4;
+    ctx.font = '600 11px Outfit, sans-serif';
+    ctx.fillStyle = '#0f172a';
+    ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+    ctx.fillStyle = ft.color;
     ctx.fillText(ft.text, ft.x, ft.y);
     ctx.restore();
   }
