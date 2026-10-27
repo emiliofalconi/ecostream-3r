@@ -330,7 +330,10 @@ window.addEventListener('keydown', (e) => {
     triggerDash();
   } else if (e.code === 'Space') {
     e.preventDefault();
-    actionReduce();
+    // Si hay una burbuja tóxica al alcance, golpearla y destruirla
+    if (!tryHitNearbyBubble()) {
+      actionReduce();
+    }
   } else if (e.key.toLowerCase() === 'r') {
     actionReuse();
   } else if (e.key.toLowerCase() === 'f') {
@@ -504,13 +507,22 @@ btnSound?.addEventListener('click', () => {
   }
 });
 
-// Click en el Canvas para Mover Avatar y Generar Ondas de Agua (Ripples)
+// Click en el Canvas para Mover Avatar, Atacar Burbujas y Generar Ondas
 canvas.addEventListener('click', (e) => {
   const rect = canvas.getBoundingClientRect();
   const scaleX = canvas.width / rect.width;
   const scaleY = canvas.height / rect.height;
   const clickX = (e.clientX - rect.left) * scaleX;
   const clickY = (e.clientY - rect.top) * scaleY;
+
+  // Si se hace clic sobre o cerca de una burbuja tóxica, golpearla
+  for (let i = threats.length - 1; i >= 0; i--) {
+    const t = threats[i];
+    if (Math.hypot(clickX - t.x, clickY - t.y) <= t.radius + 22) {
+      destroyToxicBubble(i, 'click');
+      return;
+    }
+  }
 
   state.player.targetX = clickX;
   state.player.targetY = clickY;
@@ -579,10 +591,103 @@ function register3RComboAction(actionName: string) {
 }
 
 // --------------------------------------------------------------------------
-// ACCIONES 3R CON FEEDBACK VISUAL Y SONORO
+// ZONAS DELIMITADAS DE LAS 3R (CUADRADOS/BOUNDING BOXES)
+// --------------------------------------------------------------------------
+export function isInsidePipesZone(x: number, y: number): boolean {
+  return x >= 280 && x <= 550 && y >= 40 && y <= 330;
+}
+
+export function isInsideGardenZone(x: number, y: number): boolean {
+  return x >= 280 && x <= 550 && y >= 350 && y <= 550;
+}
+
+export function isInsidePlantZone(x: number, y: number): boolean {
+  const maxW = canvas ? canvas.width - 40 : 880;
+  const maxH = canvas ? canvas.height - 40 : 560;
+  return x >= 580 && x <= maxW && y >= 40 && y <= maxH;
+}
+
+// --------------------------------------------------------------------------
+// MECÁNICA: GOLPEAR Y DESTRUIR BURBUJAS TÓXICAS
+// --------------------------------------------------------------------------
+export function destroyToxicBubble(index: number, hitBy: 'hit' | 'dash' | 'click' = 'hit'): boolean {
+  if (index < 0 || index >= threats.length) return false;
+  const t = threats[index];
+
+  sound.playWaterSplash();
+  sound.playShockwave();
+  triggerScreenShake(8);
+
+  state.player.isWrenching = true;
+  setTimeout(() => (state.player.isWrenching = false), 350);
+
+  const pts = hitBy === 'dash' ? 100 : 75;
+  state.score += pts;
+  state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 0.8);
+
+  // Shockwave morada/ácida
+  shockwaves.push({
+    x: t.x,
+    y: t.y,
+    radius: 6,
+    maxRadius: 65,
+    color: '#c084fc',
+    alpha: 0.95,
+    lineWidth: 3,
+  });
+
+  // Partículas de estallido de burbuja tóxica
+  for (let k = 0; k < 25; k++) {
+    particles.push({
+      x: t.x + (Math.random() - 0.5) * 10,
+      y: t.y + (Math.random() - 0.5) * 10,
+      vx: (Math.random() - 0.5) * 9,
+      vy: (Math.random() - 0.5) * 9,
+      life: 0.7,
+      maxLife: 0.7,
+      color: ['#a855f7', '#c084fc', '#4ade80', '#38bdf8', '#f43f5e'][Math.floor(Math.random() * 5)],
+      size: 2.5 + Math.random() * 3,
+      type: 'bubble',
+    });
+  }
+
+  const msg = hitBy === 'dash' 
+    ? `⚡ ¡BURBUJA VAPORIZADA CON DASH! +${pts} PTS`
+    : (hitBy === 'click' ? `🎯 ¡BURBUJA IMPACTADA! +${pts} PTS` : `💥 ¡BURBUJA TÓXICA DESTRUIDA! +${pts} PTS`);
+  spawnFloatingText(msg, t.x - 70, t.y - 25, '#c084fc');
+  showToast(hitBy === 'dash' ? '⚡ ¡Burbuja tóxica evaporada con Dash sónico!' : '💥 ¡Burbuja tóxica golpeada y destruida!', 'recycle');
+
+  threats.splice(index, 1);
+  updateHUD();
+  return true;
+}
+
+export function tryHitNearbyBubble(): boolean {
+  const p = state.player;
+  for (let i = threats.length - 1; i >= 0; i--) {
+    const t = threats[i];
+    const dist = Math.hypot(p.x - t.x, p.y - t.y);
+    if (dist <= t.radius + 45) {
+      return destroyToxicBubble(i, 'hit');
+    }
+  }
+  return false;
+}
+
+// --------------------------------------------------------------------------
+// ACCIONES 3R CON VERIFICACIÓN ESTRICTA DE ZONA CUADRADA
 // --------------------------------------------------------------------------
 function actionReduce() {
-  const leaking = state.pipes.find((p) => p.isLeaking);
+  const p = state.player;
+  // Solo se permite reparar dentro del cuadrado de las tuberías
+  if (!isInsidePipesZone(p.x, p.y)) {
+    sound.playButtonClick();
+    spawnFloatingText('⚠️ Debes estar dentro de la zona de Tuberías', p.x - 90, p.y - 25, '#f87171');
+    showToast('Muévete dentro del recuadro azul de Tuberías para reparar', 'reduce');
+    return;
+  }
+
+  const leaking = state.pipes.find((pipe) => pipe.isLeaking);
   if (leaking) {
     leaking.isLeaking = false;
     leaking.repairProgress = 100;
@@ -631,15 +736,23 @@ function actionReduce() {
     showToast(isBurst ? '🚨 ¡Fuga de emergencia contenida! +220 PTS' : '¡Fuga sellada con éxito! +80 Litros Ahorrados', 'reduce');
     updateHUD();
   } else {
-    // Si no hay roturas activas, dar feedback positivo y NUNCA romper tuberías artificialmente
     sound.playButtonClick();
+    spawnFloatingText('Tuberías bajo presión normal [OK]', p.x - 70, p.y - 25, '#94a3b8');
     showToast('Tuberías seguras. Presión hidráulica nominal.', 'reduce');
   }
 }
 
 function actionReuse() {
+  const p = state.player;
+  // Solo se permite regar dentro del cuadrado del huerto comunitario
+  if (!isInsideGardenZone(p.x, p.y)) {
+    sound.playButtonClick();
+    spawnFloatingText('⚠️ Debes estar dentro del Huerto Comunitario', p.x - 100, p.y - 25, '#f87171');
+    showToast('Muévete dentro del recuadro verde del Huerto para regar', 'reuse');
+    return;
+  }
+
   state.metrics.totalLitersReused += 45;
-  // Si hay ola de calor, el riego es crítico y otorga el doble de puntos
   const isHeatwave = state.activeChaos?.type === 'heatwave';
   const earnedScore = isHeatwave ? 160 : 80;
   state.score += earnedScore;
@@ -678,14 +791,23 @@ function actionReuse() {
   });
 
   register3RComboAction('reuse');
-  spawnFloatingText(`+${earnedScore} PTS (${isHeatwave ? '☀️ OLA CALOR x2' : '45L Reusados 🌱'})`, 340, 360, '#34d399');
+  spawnFloatingText(`+${earnedScore} PTS (${isHeatwave ? '☀️ OLA CALOR x2' : '45L Reusados 🌱'})`, p.x - 60, p.y - 25, '#34d399');
   showToast(isHeatwave ? '☀️ ¡Riego de emergencia bajo ola de calor! Puntos Duplicados' : 'Aguas grises canalizadas al huerto comunitario', 'reuse');
   updateHUD();
 }
 
 function actionRecycle() {
+  const p = state.player;
+  // Solo se permite purificar dentro del cuadrado de la planta de tratamiento
+  if (!isInsidePlantZone(p.x, p.y)) {
+    sound.playButtonClick();
+    spawnFloatingText('⚠️ Debes estar dentro de la Planta de Filtrado', p.x - 100, p.y - 25, '#f87171');
+    showToast('Muévete dentro del recuadro morado de la Planta para purificar', 'recycle');
+    return;
+  }
+
   state.metrics.totalLitersRecycled += 60;
-  state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 2.5);
+  state.metrics.waterPurityPct = Math.min(100, state.metrics.waterPurityPct + 3.0);
   state.score += 120;
 
   sound.playRecycle();
@@ -1083,66 +1205,93 @@ function gameLoop(now: number) {
     }
   }
 
-  // 3.1. Generación y colisión de Amenazas Hídricas (Manchas de lodo)
+  // 3.1. Generación y física de Burbujas Tóxicas (Amenazas flotantes hacia la represa)
   threatSpawnTimer -= dt;
-  if (threatSpawnTimer <= 0 && threats.length < 2) {
-    threatSpawnTimer = 12 + Math.random() * 8;
+  const maxThreats = state.activeChaos ? 4 : 3;
+  if (threatSpawnTimer <= 0 && threats.length < maxThreats) {
+    threatSpawnTimer = 6.5 + Math.random() * 5.0; // Aparecen continuamente cada 6.5 - 11.5s
     threats.push({
       id: nextThreatId++,
-      x: canvas.width - 60,
-      y: 160 + Math.random() * (canvas.height - 240),
-      vx: -42 - Math.random() * 25,
+      x: canvas.width - 50,
+      y: 120 + Math.random() * (canvas.height - 220),
+      vx: -46 - Math.random() * 26, // Flotan hacia la izquierda en dirección a la represa
       vy: (Math.random() - 0.5) * 20,
-      radius: 17,
-      pulse: 0,
+      radius: 19 + Math.random() * 4,
+      pulse: Math.random() * Math.PI * 2,
     });
   }
 
   for (let i = threats.length - 1; i >= 0; i--) {
     const t = threats[i];
     t.x += t.vx * dt;
-    t.y += t.vy * dt;
+    // Movimiento ondulante de flotación
     t.pulse += dt * 3.5;
+    t.y += Math.sin(t.pulse) * 0.7;
 
+    // A. ¿El jugador la golpea directamente con su herramienta, Dash o proximidad de ataque?
     const dPlayer = Math.hypot(p.x - t.x, p.y - t.y);
-    if (dPlayer < t.radius + 18) {
-      if (p.isDashing) {
-        sound.playWaterSplash();
-        triggerScreenShake(7);
-        state.score += 75;
-        spawnFloatingText('💥 ¡CONTAMINANTE DESTRUIDO CON DASH! +75 PTS', t.x - 60, t.y - 25, '#f43f5e');
-        showToast('¡Amenaza evaporada con Dash sónico!', 'recycle');
-        for (let k = 0; k < 18; k++) {
-          particles.push({
-            x: t.x,
-            y: t.y,
-            vx: (Math.random() - 0.5) * 6,
-            vy: (Math.random() - 0.5) * 6,
-            life: 0.5,
-            maxLife: 0.5,
-            color: '#a855f7',
-            size: 3,
-            type: 'bubble',
-          });
-        }
-        threats.splice(i, 1);
-        updateHUD();
+    if (dPlayer < t.radius + 22) {
+      if (p.isDashing || p.isWrenching) {
+        destroyToxicBubble(i, p.isDashing ? 'dash' : 'hit');
         continue;
       } else {
-        state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 1.0);
-        spawnFloatingText('⚠️ ¡TOXINA! Pureza -1.0% (¡Usa DASH para destruirla!)', p.x - 60, p.y - 25, '#ef4444');
+        // Empuje de contacto físico: el jugador puede presionar Espacio para destruirla
+        state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 0.5);
+        spawnFloatingText('⚠️ ¡TOXINA! Presiona [ESPACIO] para golpearla', p.x - 70, p.y - 25, '#f43f5e');
         p.vx = -p.vx * 1.5;
         p.vy = -p.vy * 1.5;
-        triggerScreenShake(4);
+        triggerScreenShake(3);
       }
     }
 
-    if (t.x < 260) {
-      state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - 3.5);
-      spawnFloatingText('⚠️ ¡Contaminante llegó al embalse! Pureza -3.5%', 220, t.y, '#dc2626');
-      triggerScreenShake(6);
+    // B. ¿La burbuja tóxica golpeó la represa / embalse (X <= 250)?
+    if (t.x <= 250) {
+      const waterDamage = 6.0; // Se pierde vida/agua de la represa
+      const purityDamage = 4.0; // Se pierde pureza
+      state.metrics.reservoirLevelPct = Math.max(0, state.metrics.reservoirLevelPct - waterDamage);
+      state.metrics.waterPurityPct = Math.max(0, state.metrics.waterPurityPct - purityDamage);
+
+      sound.playDefeat();
+      triggerScreenShake(12);
+
+      // Onda expansiva roja en la estructura de la represa
+      shockwaves.push({
+        x: 235,
+        y: t.y,
+        radius: 8,
+        maxRadius: 75,
+        color: '#ef4444',
+        alpha: 1.0,
+        lineWidth: 3.5,
+      });
+
+      // Salpicadura de agua contaminada
+      for (let k = 0; k < 22; k++) {
+        particles.push({
+          x: 235,
+          y: t.y,
+          vx: Math.random() * 4 + 1.5,
+          vy: (Math.random() - 0.5) * 6,
+          life: 0.8,
+          maxLife: 0.8,
+          color: ['#ef4444', '#7f1d1d', '#38bdf8', '#c084fc'][Math.floor(Math.random() * 4)],
+          size: 3 + Math.random() * 2,
+          type: 'water',
+        });
+      }
+
+      spawnFloatingText(`🚨 ¡IMPACTO EN LA REPRESA! (-${waterDamage}% Embalse / -${purityDamage}% Pureza)`, 210, t.y - 10, '#ef4444');
+      showToast(`🚨 ¡Burbuja tóxica colisionó con la represa! Se perdió ${waterDamage}% de agua comunal.`, 'reduce');
       threats.splice(i, 1);
       updateHUD();
+
+      // Verificar condiciones de colapso de la represa
+      if (state.metrics.reservoirLevelPct <= 0) {
+        triggerGameOver('drought');
+      } else if (state.metrics.waterPurityPct < 40) {
+        triggerGameOver('toxic');
+      }
+      continue;
     }
   }
 
@@ -1269,8 +1418,10 @@ function gameLoop(now: number) {
   const zone1H = 290;
 
   ctx.fillStyle = 'rgba(22, 32, 54, 0.5)';
-  ctx.strokeStyle = 'rgba(71, 85, 105, 0.5)';
-  ctx.lineWidth = 1.5;
+  const inZ1 = isInsidePipesZone(state.player.x, state.player.y);
+  ctx.fillStyle = inZ1 ? 'rgba(56, 189, 248, 0.12)' : 'rgba(22, 32, 54, 0.5)';
+  ctx.strokeStyle = inZ1 ? '#38bdf8' : 'rgba(71, 85, 105, 0.5)';
+  ctx.lineWidth = inZ1 ? 2.5 : 1.5;
   ctx.beginPath();
   ctx.roundRect(zone1X, zone1Y, zone1W, zone1H, 14);
   ctx.fill();
@@ -1373,9 +1524,10 @@ function gameLoop(now: number) {
   const zone2W = 270;
   const zone2H = 200;
 
-  ctx.fillStyle = 'rgba(20, 83, 45, 0.35)';
-  ctx.strokeStyle = '#22c55e';
-  ctx.lineWidth = 1.5;
+  const inZ2 = isInsideGardenZone(state.player.x, state.player.y);
+  ctx.fillStyle = inZ2 ? 'rgba(34, 197, 94, 0.18)' : 'rgba(20, 83, 45, 0.35)';
+  ctx.strokeStyle = inZ2 ? '#4ade80' : '#22c55e';
+  ctx.lineWidth = inZ2 ? 2.5 : 1.5;
   ctx.beginPath();
   ctx.roundRect(zone2X, zone2Y, zone2W, zone2H, 14);
   ctx.fill();
@@ -1460,9 +1612,10 @@ function gameLoop(now: number) {
   const zone3W = canvas.width - zone3X - 40;
   const zone3H = canvas.height - 80;
 
-  ctx.fillStyle = 'rgba(88, 28, 135, 0.3)';
-  ctx.strokeStyle = '#a855f7';
-  ctx.lineWidth = 1.5;
+  const inZ3 = isInsidePlantZone(state.player.x, state.player.y);
+  ctx.fillStyle = inZ3 ? 'rgba(168, 85, 247, 0.18)' : 'rgba(88, 28, 135, 0.3)';
+  ctx.strokeStyle = inZ3 ? '#c084fc' : '#a855f7';
+  ctx.lineWidth = inZ3 ? 2.5 : 1.5;
   ctx.beginPath();
   ctx.roundRect(zone3X, zone3Y, zone3W, zone3H, 16);
   ctx.fill();
@@ -1587,30 +1740,48 @@ function gameLoop(now: number) {
   });
 
   // ------------------------------------------------------------------------
-  // 5.15. RENDERIZADO DE AMENAZAS HÍDRICAS (CONTAMINANTES TÓXICOS)
+  // 5.15. RENDERIZADO DE BURBUJAS TÓXICAS (AMENAZAS FLOTANTES)
   // ------------------------------------------------------------------------
   threats.forEach((t) => {
     ctx.save();
     ctx.translate(t.x, t.y);
-    const pulseScale = 1 + Math.sin(t.pulse) * 0.12;
-    ctx.fillStyle = 'rgba(168, 85, 247, 0.25)';
+    const wobble = Math.sin(t.pulse) * 2.5;
+    const pulseScale = 1 + Math.sin(t.pulse * 1.5) * 0.08;
+
+    // Halo radiactivo exterior
+    ctx.fillStyle = 'rgba(168, 85, 247, 0.22)';
     ctx.beginPath();
-    ctx.arc(0, 0, (t.radius + 6) * pulseScale, 0, Math.PI * 2);
+    ctx.arc(0, wobble, (t.radius + 8) * pulseScale, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#7e22ce';
+    // Cuerpo de la burbuja translúcida tóxica (gradiente morado/verde ácido)
+    const bubbleGrad = ctx.createRadialGradient(-4, wobble - 4, 3, 0, wobble, t.radius);
+    bubbleGrad.addColorStop(0, 'rgba(192, 132, 252, 0.85)');
+    bubbleGrad.addColorStop(0.5, 'rgba(126, 34, 206, 0.75)');
+    bubbleGrad.addColorStop(0.85, 'rgba(34, 197, 94, 0.65)');
+    bubbleGrad.addColorStop(1, 'rgba(15, 23, 42, 0.9)');
+
+    ctx.fillStyle = bubbleGrad;
+    ctx.strokeStyle = '#c084fc';
+    ctx.lineWidth = 1.8;
     ctx.beginPath();
-    ctx.arc(0, 0, t.radius * pulseScale, 0, Math.PI * 2);
+    ctx.arc(0, wobble, t.radius * pulseScale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Reflejo especular blanco de burbuja (glint)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+    ctx.beginPath();
+    ctx.arc(-t.radius * 0.35, wobble - t.radius * 0.35, t.radius * 0.25, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = '#c084fc';
-    ctx.beginPath();
-    ctx.arc(-4, -4, 4, 0, Math.PI * 2);
-    ctx.fill();
+    // Icono de peligro / advertencia tóxica
+    ctx.fillStyle = '#fef08a';
+    ctx.font = 'bold 11px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('☣️', 0, wobble + 4);
+    ctx.textAlign = 'left';
 
-    ctx.fillStyle = '#f43f5e';
-    ctx.font = 'bold 10px Outfit, sans-serif';
-    ctx.fillText('☣️ TÓXICO', -22, -t.radius - 4);
     ctx.restore();
   });
 
@@ -1802,23 +1973,35 @@ function gameLoop(now: number) {
 
   ctx.restore();
 
-  // Tooltip compacto de proximidad (sin cubrir al personaje)
-  const dPipe = Math.hypot(state.player.x - 410, state.player.y - 220);
-  const dGarden = Math.hypot(state.player.x - 410, state.player.y - 440);
-  const dPlant = Math.hypot(state.player.x - 780, state.player.y - 340);
+  // Tooltip compacto de interacción según el recuadro delimitado de cada zona
+  const inPipeZone = isInsidePipesZone(state.player.x, state.player.y);
+  const inGardenZone = isInsideGardenZone(state.player.x, state.player.y);
+  const inPlantZone = isInsidePlantZone(state.player.x, state.player.y);
+
+  // Verificar si hay alguna burbuja tóxica al alcance para golpearla
+  let nearBubble = false;
+  for (const t of threats) {
+    if (Math.hypot(state.player.x - t.x, state.player.y - t.y) <= t.radius + 45) {
+      nearBubble = true;
+      break;
+    }
+  }
 
   let auraColor: string | null = null;
   let auraPrompt: string | null = null;
 
-  if (dPipe < 150) {
+  if (nearBubble) {
+    auraColor = '#f43f5e';
+    auraPrompt = '[ESPACIO] 💥 ¡GOLPEAR BURBUJA!';
+  } else if (inPipeZone) {
     auraColor = '#38bdf8';
-    auraPrompt = '[ESPACIO] Reparar';
-  } else if (dGarden < 150) {
+    auraPrompt = '[ESPACIO] 🔧 Reparar';
+  } else if (inGardenZone) {
     auraColor = '#34d399';
-    auraPrompt = '[R] Regar';
-  } else if (dPlant < 160) {
+    auraPrompt = '[R] 🌱 Regar';
+  } else if (inPlantZone) {
     auraColor = '#c084fc';
-    auraPrompt = '[F] Filtrar';
+    auraPrompt = '[F] ⚗️ Filtrar';
   }
 
   if (auraColor && auraPrompt) {

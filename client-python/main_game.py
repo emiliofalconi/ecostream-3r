@@ -169,6 +169,23 @@ class FloatingText:
         self.alpha = max(0, int(255 * self.life))
         return self.life > 0
 
+class ToxicBubble:
+    """Burbuja contaminante tóxica que flota hacia la represa."""
+    def __init__(self, x, y, vx, vy, radius=18):
+        self.x = float(x)
+        self.y = float(y)
+        self.vx = float(vx)
+        self.vy = float(vy)
+        self.radius = radius
+        self.pulse = random.uniform(0.0, 6.28)
+
+    def update(self, dt):
+        self.x += self.vx * dt
+        self.pulse += dt * 3.5
+        self.y += math.sin(self.pulse) * 0.7
+        return self.x > 270.0 # True mientras no colisione con el muro de la represa
+
+
 class EcoStreamGameClient:
     def __init__(self, host="localhost:50052", hosts=None, room_id="rm_demo_01", player_id="usr_victor", room_ticket="", is_bot=False):
         raw_hosts = hosts if hosts else host
@@ -203,6 +220,8 @@ class EcoStreamGameClient:
         self.dash_timer = 0.0
         self.remote_players = []
         self.active_events = []
+        self.toxic_bubbles = []
+        self.bubble_spawn_timer = 5.0
         self.pipes = [
             LocalPipe(pipe_id=1, is_leaking=False),
             LocalPipe(pipe_id=2, is_leaking=True),
@@ -679,9 +698,29 @@ class EcoStreamGameClient:
                                 self.particles.append(Particle(self.player_x, self.player_y, (random.random()-0.5)*5, (random.random()-0.5)*5, (56, 189, 248), 3, 0.5))
                             self.floating_texts.append(FloatingText("DASH!", self.player_x - 15, self.player_y - 25, (56, 189, 248)))
                     elif not self.is_bot and event.key == pygame.K_SPACE:
-                        # 1. Reducir: requiere proximidad física con las tuberías (X: ~440, Y: 140-300)
-                        dist_to_pipes = math.hypot(self.player_x - 440, self.player_y - 215)
-                        if dist_to_pipes < 140:
+                        # A. ¿Hay una burbuja tóxica cerca para golpearla y destruirla?
+                        hit_bubble = None
+                        for b in self.toxic_bubbles:
+                            if math.hypot(self.player_x - b.x, self.player_y - b.y) <= b.radius + 45:
+                                hit_bubble = b
+                                break
+
+                        if hit_bubble:
+                            self.toxic_bubbles.remove(hit_bubble)
+                            self.team_score += 75
+                            self.purity_pct = min(100.0, self.purity_pct + 0.8)
+                            for _ in range(20):
+                                self.particles.append(Particle(
+                                    hit_bubble.x, hit_bubble.y,
+                                    (random.random() - 0.5) * 8.0,
+                                    (random.random() - 0.5) * 8.0,
+                                    random.choice([(168, 85, 247), (192, 132, 252), (56, 189, 248), (244, 63, 94)]),
+                                    random.randint(2, 4), 0.65
+                                ))
+                            self.floating_texts.append(FloatingText("💥 ¡BURBUJA TÓXICA DESTRUIDA! +75 PTS", hit_bubble.x - 70, hit_bubble.y - 20, (192, 132, 252)))
+                            logger.info("[Mecánica] ¡Burbuja tóxica golpeada y destruida! +75 PTS")
+                        # B. Si no golpea burbuja, reparar solamente en el cuadrado de Tuberías (X: 300-590, Y: 110-360)
+                        elif 300 <= self.player_x <= 590 and 110 <= self.player_y <= 360:
                             repaired = False
                             for p in self.pipes:
                                 if p.is_leaking:
@@ -700,11 +739,11 @@ class EcoStreamGameClient:
                             if not repaired:
                                 self.floating_texts.append(FloatingText("Tuberias Seguras (Presion Normal)", self.player_x - 60, self.player_y - 20, (148, 163, 184)))
                         else:
-                            self.floating_texts.append(FloatingText("Acercate a la Zona de Tuberias", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.floating_texts.append(FloatingText("⚠️ Debes estar en el recuadro de Tuberias", self.player_x - 80, self.player_y - 20, (239, 68, 68)))
+
                     elif not self.is_bot and event.key == pygame.K_r:
-                        # 2. Reusar: requiere proximidad física con el Huerto / Válvula (X: ~440, Y: 480)
-                        dist_to_garden = math.hypot(self.player_x - 440, self.player_y - 480)
-                        if dist_to_garden < 150:
+                        # 2. Reusar: SOLAMENTE en el cuadrado del Huerto (X: 300-590, Y: 380-640)
+                        if 300 <= self.player_x <= 590 and 380 <= self.player_y <= 640:
                             self.team_score += 80
                             self.liters_reused += 85.0
                             self.queue_action(gameplay_pb2.PlayerAction(
@@ -714,11 +753,11 @@ class EcoStreamGameClient:
                             self.floating_texts.append(FloatingText("+80 PTS (Riego de Huerto)", self.player_x - 40, self.player_y - 20, (52, 211, 153)))
                             logger.info("[Acción 3R - Reusar] Válvula desviada a huerto comunitario. +80 PTS")
                         else:
-                            self.floating_texts.append(FloatingText("Acercate al Huerto Comunitario", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.floating_texts.append(FloatingText("⚠️ Debes estar en el recuadro del Huerto", self.player_x - 80, self.player_y - 20, (239, 68, 68)))
+
                     elif not self.is_bot and event.key == pygame.K_f:
-                        # 3. Reciclar: requiere proximidad física con la Planta de Tratamiento UV (X: ~800, Y: 380)
-                        dist_to_plant = math.hypot(self.player_x - 800, self.player_y - 380)
-                        if dist_to_plant < 170:
+                        # 3. Reciclar: SOLAMENTE en el cuadrado de la Planta UV (X: 615-995, Y: 110-640)
+                        if 615 <= self.player_x <= 995 and 110 <= self.player_y <= 640:
                             self.team_score += 120
                             self.liters_recycled += 60.0
                             self.purity_pct = min(100.0, self.purity_pct + 1.5)
@@ -729,7 +768,7 @@ class EcoStreamGameClient:
                             self.floating_texts.append(FloatingText("+120 PTS (Filtro UV Activado)", self.player_x - 40, self.player_y - 20, (192, 132, 252)))
                             logger.info("[Acción 3R - Reciclar] Filtro UV activado. Pureza incrementada. +120 PTS")
                         else:
-                            self.floating_texts.append(FloatingText("Acercate a la Planta UV", self.player_x - 60, self.player_y - 20, (239, 68, 68)))
+                            self.floating_texts.append(FloatingText("⚠️ Debes estar en el recuadro de la Planta UV", self.player_x - 80, self.player_y - 20, (239, 68, 68)))
 
             # Lógica y actualización en modo PLAYING
             if self.game_state == "PLAYING":
@@ -765,6 +804,59 @@ class EcoStreamGameClient:
                     self.player_y = max(115.0, min(WINDOW_HEIGHT - 45.0, self.player_y + self.vy * dt))
                 else:
                     self.bot_ai_tick()
+
+                # Actualización y física de Burbujas Tóxicas
+                self.bubble_spawn_timer -= dt
+                if self.bubble_spawn_timer <= 0 and len(self.toxic_bubbles) < 4:
+                    self.bubble_spawn_timer = random.uniform(6.0, 11.0)
+                    self.toxic_bubbles.append(ToxicBubble(
+                        WINDOW_WIDTH + 15,
+                        random.uniform(140, WINDOW_HEIGHT - 140),
+                        random.uniform(-52.0, -32.0),
+                        random.uniform(-10.0, 10.0),
+                        radius=random.randint(18, 22)
+                    ))
+
+                for b in list(self.toxic_bubbles):
+                    still_active = b.update(dt)
+                    if not still_active:
+                        # Impactó en la represa / embalse (X <= 270) -> Daño directo
+                        self.toxic_bubbles.remove(b)
+                        water_dmg = 6.0
+                        purity_dmg = 4.0
+                        self.reservoir_pct = max(0.0, self.reservoir_pct - water_dmg)
+                        self.purity_pct = max(0.0, self.purity_pct - purity_dmg)
+                        for _ in range(16):
+                            self.particles.append(Particle(
+                                270, b.y,
+                                random.uniform(1.0, 5.0),
+                                (random.random() - 0.5) * 6.0,
+                                random.choice([(239, 68, 68), (168, 85, 247), (56, 189, 248)]),
+                                random.randint(2, 4), 0.7
+                            ))
+                        self.floating_texts.append(FloatingText(f"🚨 ¡IMPACTO REPRESA! -{water_dmg:.0f}% Embalse / -{purity_dmg:.0f}% Pureza", 150, int(b.y) - 10, (239, 68, 68)))
+                        logger.warning(f"Burbuja tóxica impactó la represa. Embalse -{water_dmg}%, Pureza -{purity_dmg}%.")
+                        continue
+
+                    # Colisión con el jugador
+                    d_pl = math.hypot(self.player_x - b.x, self.player_y - b.y)
+                    if d_pl < b.radius + 20:
+                        if self.dash_timer > 0:
+                            # Destrucción con Dash
+                            self.toxic_bubbles.remove(b)
+                            self.team_score += 100
+                            self.purity_pct = min(100.0, self.purity_pct + 0.8)
+                            for _ in range(20):
+                                self.particles.append(Particle(
+                                    b.x, b.y,
+                                    (random.random() - 0.5) * 8.0,
+                                    (random.random() - 0.5) * 8.0,
+                                    (192, 132, 252), 3, 0.65
+                                ))
+                            self.floating_texts.append(FloatingText("⚡ ¡BURBUJA DESTRUIDA CON DASH! +100 PTS", b.x - 70, b.y - 20, (192, 132, 252)))
+                        else:
+                            self.purity_pct = max(0.0, self.purity_pct - 0.5)
+                            self.floating_texts.append(FloatingText("⚠️ ¡Toxina! Pulsa [ESPACIO] para destruirla", self.player_x - 60, self.player_y - 20, (244, 63, 94)))
 
                 # Fuga natural periódica (la rotura ocurre por tiempo/presión, NO porque el usuario presione Espacio)
                 self.natural_leak_timer -= dt
@@ -857,7 +949,8 @@ class EcoStreamGameClient:
             # B. ZONA 1: REDUCIR
             z1 = pygame.Rect(300, 110, 290, 250)
             pygame.draw.rect(screen, (22, 32, 54), z1, border_radius=12)
-            pygame.draw.rect(screen, (71, 85, 105), z1, 2, border_radius=12)
+            in_z1 = (300 <= self.player_x <= 590 and 110 <= self.player_y <= 360)
+            pygame.draw.rect(screen, (56, 189, 248) if in_z1 else (71, 85, 105), z1, 3 if in_z1 else 2, border_radius=12)
 
             if "icon_wrench" in sprites:
                 icon_w = pygame.transform.scale(sprites["icon_wrench"], (20, 20))
@@ -893,7 +986,8 @@ class EcoStreamGameClient:
             # C. ZONA 2: REUSAR
             z2 = pygame.Rect(300, 380, 290, 260)
             pygame.draw.rect(screen, (20, 83, 45), z2, border_radius=12)
-            pygame.draw.rect(screen, (34, 197, 94), z2, 2, border_radius=12)
+            in_z2 = (300 <= self.player_x <= 590 and 380 <= self.player_y <= 640)
+            pygame.draw.rect(screen, (74, 222, 128) if in_z2 else (34, 197, 94), z2, 3 if in_z2 else 2, border_radius=12)
 
             if "icon_shovel" in sprites:
                 icon_s = pygame.transform.scale(sprites["icon_shovel"], (20, 20))
@@ -924,7 +1018,8 @@ class EcoStreamGameClient:
             # D. ZONA 3: RECICLAR
             z3 = pygame.Rect(615, 110, 380, 530)
             pygame.draw.rect(screen, (46, 16, 77), z3, border_radius=12)
-            pygame.draw.rect(screen, COLOR_PLANT, z3, 2, border_radius=12)
+            in_z3 = (615 <= self.player_x <= 995 and 110 <= self.player_y <= 640)
+            pygame.draw.rect(screen, (192, 132, 252) if in_z3 else COLOR_PLANT, z3, 3 if in_z3 else 2, border_radius=12)
 
             if "icon_recycle" in sprites:
                 icon_r = pygame.transform.scale(sprites["icon_recycle"], (20, 20))
@@ -953,6 +1048,24 @@ class EcoStreamGameClient:
                 pygame.draw.line(screen, (192, 132, 252), (center_x, center_y), (fx, fy), 4)
             tag_uv = font_small.render("Reactor UV & Carbon Activo", True, (216, 180, 254))
             screen.blit(tag_uv, (center_x - tag_uv.get_width() // 2, center_y + 60))
+
+            # Dibujo de Burbujas Tóxicas flotantes
+            for b in self.toxic_bubbles:
+                wobble = int(math.sin(b.pulse) * 3)
+                bx, by = int(b.x), int(b.y) + wobble
+                # Halo translúcido
+                halo_surf = pygame.Surface((b.radius * 3, b.radius * 3), pygame.SRCALPHA)
+                pygame.draw.circle(halo_surf, (168, 85, 247, 65), (b.radius * 3 // 2, b.radius * 3 // 2), b.radius + 6)
+                screen.blit(halo_surf, (bx - b.radius * 3 // 2, by - b.radius * 3 // 2))
+
+                # Esfera de burbuja tóxica
+                pygame.draw.circle(screen, (147, 51, 234), (bx, by), b.radius)
+                pygame.draw.circle(screen, (192, 132, 252), (bx, by), b.radius, 2)
+                # Reflejo especular blanco
+                pygame.draw.circle(screen, (255, 255, 255), (bx - b.radius // 3, by - b.radius // 3), max(2, b.radius // 5))
+                # Símbolo tóxico
+                b_lbl = font_small.render("☣", True, (254, 240, 138))
+                screen.blit(b_lbl, (bx - b_lbl.get_width() // 2, by - b_lbl.get_height() // 2))
 
             # E. PARTÍCULAS
             self.particles = [p for p in self.particles if p.update()]
@@ -1015,22 +1128,25 @@ class EcoStreamGameClient:
             self_lbl = "BOT" if self.is_bot else "TU"
             draw_character(self.player_x, self.player_y, self.vx, self.vy, self.dash_timer > 0, self.is_bot, self_lbl, is_self=True)
 
-            # TOOLTIP FLOTANTE DE INTERACCIÓN SEGÚN PROXIMIDAD
+            # TOOLTIP FLOTANTE DE INTERACCIÓN SEGÚN ZONA ESTRICTA O BURBUJA CERCANA
             if not self.is_bot and self.game_state == "PLAYING":
-                d_pipe = math.hypot(self.player_x - 440, self.player_y - 215)
-                d_garden = math.hypot(self.player_x - 440, self.player_y - 480)
-                d_plant = math.hypot(self.player_x - 800, self.player_y - 380)
+                # Prioridad 1: Burbuja tóxica a rango de golpe
+                near_bubble = any(math.hypot(b.x - self.player_x, b.y - self.player_y) <= (b.radius + 65) for b in self.toxic_bubbles)
 
                 prompt = None
-                if d_pipe < 140:
-                    prompt = "[ESPACIO] Reparar"
-                elif d_garden < 150:
-                    prompt = "[R] Regar"
-                elif d_plant < 170:
-                    prompt = "[F] Filtrar"
+                prompt_color = (254, 240, 138)
+                if near_bubble:
+                    prompt = "[ESPACIO] 💥 ¡GOLPEAR BURBUJA!"
+                    prompt_color = (248, 113, 113)
+                elif 300 <= self.player_x <= 590 and 110 <= self.player_y <= 360:
+                    prompt = "[ESPACIO] 🔧 Reparar Fuga"
+                elif 300 <= self.player_x <= 590 and 380 <= self.player_y <= 640:
+                    prompt = "[R] 🌱 Regar Huerto"
+                elif 615 <= self.player_x <= 995 and 110 <= self.player_y <= 640:
+                    prompt = "[F] ⚗️ Purificar Agua"
 
                 if prompt:
-                    p_surf = font_small.render(prompt, True, (254, 240, 138))
+                    p_surf = font_small.render(prompt, True, prompt_color)
                     screen.blit(p_surf, (int(self.player_x) - p_surf.get_width() // 2, int(self.player_y) + 26))
 
             # H. TEXTOS FLOTANTES COMPACTOS
@@ -1053,7 +1169,7 @@ class EcoStreamGameClient:
             # Izquierda: Logo y controles
             screen.blit(font_title.render("EcoStream 3R", True, (56, 189, 248)), (25, 10))
             screen.blit(font_small.render(f"Lobby: [{self.room_id}] | Jugadores: {len(self.remote_players) + 1}", True, COLOR_TEXT_MUTED), (25, 38))
-            screen.blit(font_small.render("Controles: [WASD] Mover | [SHIFT] Dash | [Espacio/R/F] Acciones 3R", True, (203, 213, 225)), (25, 58))
+            screen.blit(font_small.render("Controles: [WASD] Mover | [SHIFT] Dash | [ESPACIO] Reparar/Golpear Burbuja | [R/F] 3R", True, (203, 213, 225)), (25, 58))
 
             # Centro: PUNTOS y métricas clave
             screen.blit(font_large.render(f"PUNTOS: {self.team_score}", True, (250, 204, 21)), (410, 14))
