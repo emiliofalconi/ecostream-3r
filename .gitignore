@@ -28,3 +28,7 @@ env/
 
 # Archivos de trabajo de agentes
 .agents/
+
+# Local cache & build tools
+.vite/
+.cargo/
